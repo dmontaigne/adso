@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from adso.catalogue import BookFilters, get_book, list_books, search_books
 from adso import db
 from adso.exports import export_csv, export_json
 from adso.reports import latest_conflicts_markdown, latest_sync_summary_markdown
@@ -175,6 +176,89 @@ class AdsoCoreTests(unittest.TestCase):
         data = json.loads(json_path.read_text(encoding="utf-8"))
         self.assertEqual(data[0]["title"], "The Name of the Rose")
         self.assertIn("goodreads_id,title,author", csv_export_path.read_text(encoding="utf-8"))
+
+    def test_catalogue_query_service_lists_filters_and_limits_books(self) -> None:
+        csv_path = self.root / "goodreads.csv"
+        write_goodreads_csv(
+            csv_path,
+            [
+                row(),
+                row(
+                    **{
+                        "Book Id": "2",
+                        "Title": "The Left Hand of Darkness",
+                        "Author": "Ursula K. Le Guin",
+                        "Exclusive Shelf": "read",
+                        "Bookshelves": "read, fiction",
+                    }
+                ),
+                row(
+                    **{
+                        "Book Id": "3",
+                        "Title": "A Room of One's Own",
+                        "Author": "Virginia Woolf",
+                        "Exclusive Shelf": "currently-reading",
+                        "Bookshelves": "currently-reading, essays",
+                    }
+                ),
+            ],
+        )
+        import_goodreads_csv(self.conn, csv_path, mode="import")
+        db.update_local_fields(self.conn, "2", {"owned": 1, "location": "Office"})
+
+        all_books = list_books(self.conn)
+        read_books = list_books(self.conn, BookFilters(status="Read"))
+        owned_books = list_books(self.conn, BookFilters(owned=True))
+        office_books = list_books(self.conn, BookFilters(location="off"))
+        limited_books = list_books(self.conn, BookFilters(limit=2))
+
+        self.assertEqual([book["title"] for book in all_books], [
+            "A Room of One's Own",
+            "The Left Hand of Darkness",
+            "The Name of the Rose",
+        ])
+        self.assertEqual([book["goodreads_id"] for book in read_books], ["2"])
+        self.assertEqual([book["goodreads_id"] for book in owned_books], ["2"])
+        self.assertEqual([book["goodreads_id"] for book in office_books], ["2"])
+        self.assertEqual(len(limited_books), 2)
+        self.assertIs(limited_books[0]["owned"], False)
+
+    def test_catalogue_query_service_searches_and_gets_books(self) -> None:
+        csv_path = self.root / "goodreads.csv"
+        write_goodreads_csv(
+            csv_path,
+            [
+                row(),
+                row(
+                    **{
+                        "Book Id": "2",
+                        "Title": "The Left Hand of Darkness",
+                        "Author": "Ursula K. Le Guin",
+                        "Bookshelves": "fiction, science-fiction",
+                        "My Review": "A remarkable novel about winter and society.",
+                    }
+                ),
+            ],
+        )
+        import_goodreads_csv(self.conn, csv_path, mode="import")
+        db.update_local_fields(
+            self.conn,
+            "2",
+            {"owned": 1, "location": "Office", "shelf_box": "Shelf B", "local_notes": "Lending copy"},
+        )
+
+        search_results = search_books(self.conn, "winter")
+        filtered_results = search_books(self.conn, "novel", BookFilters(owned=True))
+        book = get_book(self.conn, "2")
+        missing = get_book(self.conn, "missing")
+
+        self.assertEqual([result["goodreads_id"] for result in search_results], ["2"])
+        self.assertEqual([result["goodreads_id"] for result in filtered_results], ["2"])
+        self.assertEqual(book["title"], "The Left Hand of Darkness")
+        self.assertEqual(book["shelves"], ["fiction", "science-fiction"])
+        self.assertTrue(book["owned"])
+        self.assertEqual(book["location"], "Office")
+        self.assertIsNone(missing)
 
 
 if __name__ == "__main__":
