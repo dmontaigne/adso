@@ -9,7 +9,7 @@ from pathlib import Path
 
 from adso import db
 from adso.exports import export_csv, export_json
-from adso.reports import latest_conflicts_markdown
+from adso.reports import latest_conflicts_markdown, latest_sync_summary_markdown
 from adso.sync import import_goodreads_csv
 
 
@@ -116,6 +116,10 @@ class AdsoCoreTests(unittest.TestCase):
         self.assertEqual(summary.conflicts, 0)
         self.assertEqual(book["reading_status"], "Read")
         self.assertEqual(book["date_read"], "2026-04-28")
+        sync_report = latest_sync_summary_markdown(self.conn)
+        self.assertIn("What happened", sync_report)
+        self.assertIn("safely updated 1 existing books", sync_report)
+        self.assertIn("No manual review is required", sync_report)
 
     def test_local_physical_fields_survive_goodreads_sync(self) -> None:
         csv_path = self.root / "goodreads.csv"
@@ -155,6 +159,10 @@ class AdsoCoreTests(unittest.TestCase):
         self.assertEqual(book["reading_status"], "Local Status")
         self.assertIn("The Name of the Rose", report)
         self.assertIn("reading_status", report)
+        self.assertIn("current reading state", report)
+        sync_report = latest_sync_summary_markdown(self.conn)
+        self.assertIn("Local catalogue values were preserved", sync_report)
+        self.assertIn("adso report conflicts", sync_report)
 
     def test_portable_exports(self) -> None:
         csv_path = self.root / "goodreads.csv"

@@ -13,6 +13,7 @@ pip install -e .
 adso init
 adso import goodreads goodreads_library_export.csv
 adso sync goodreads goodreads_library_export.csv
+adso report summary
 adso report conflicts
 adso export json --output exports/catalogue.json
 adso export csv --output exports/catalogue.csv
@@ -37,6 +38,7 @@ adso import goodreads path/to/export.csv
 adso sync goodreads path/to/export.csv
 adso edit GOODREADS_ID --owned true --copy-count 1 --location Office --shelf-box A1
 adso report conflicts --output reports/conflicts.md
+adso report summary --output reports/summary.md
 adso export csv --output exports/catalogue.csv
 adso export json --output exports/catalogue.json
 adso export notion
