@@ -8,7 +8,12 @@ from pathlib import Path
 from . import db
 from .exports import export_csv, export_json
 from .notion import NotionConfigError, export_to_notion
-from .reports import latest_conflicts_markdown, write_latest_conflicts
+from .reports import (
+    latest_conflicts_markdown,
+    latest_sync_summary_markdown,
+    write_latest_conflicts,
+    write_latest_sync_summary,
+)
 from .sync import import_goodreads_csv
 
 
@@ -30,12 +35,12 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "import" and args.source == "goodreads":
             summary = import_goodreads_csv(conn, args.csv, mode="import")
-            _print_summary(summary)
+            print(latest_sync_summary_markdown(conn))
             return 0
 
         if args.command == "sync" and args.source == "goodreads":
             summary = import_goodreads_csv(conn, args.csv, mode="sync")
-            _print_summary(summary)
+            print(latest_sync_summary_markdown(conn))
             if summary.conflicts:
                 output = Path("reports") / f"conflicts-import-{summary.import_run_id}.md"
                 write_latest_conflicts(conn, output)
@@ -54,6 +59,14 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Wrote conflict report to {path}")
             else:
                 print(latest_conflicts_markdown(conn))
+            return 0
+
+        if args.command == "report" and args.report_type == "summary":
+            if args.output:
+                path = write_latest_sync_summary(conn, args.output)
+                print(f"Wrote sync summary to {path}")
+            else:
+                print(latest_sync_summary_markdown(conn))
             return 0
 
         if args.command == "export" and args.target == "csv":
@@ -113,6 +126,8 @@ def _build_parser() -> argparse.ArgumentParser:
     report_sub = report_parser.add_subparsers(dest="report_type", required=True)
     conflicts = report_sub.add_parser("conflicts", help="Show latest conflict report")
     conflicts.add_argument("--output", help="Write report to this path")
+    summary = report_sub.add_parser("summary", help="Show latest sync summary")
+    summary.add_argument("--output", help="Write summary to this path")
 
     export_parser = subparsers.add_parser("export", help="Export catalogue data")
     export_sub = export_parser.add_subparsers(dest="target", required=True)
@@ -143,16 +158,6 @@ def _local_updates_from_args(args) -> dict[str, object]:
     if not updates:
         raise SystemExit("No local fields provided to update.")
     return updates
-
-
-def _print_summary(summary) -> None:
-    print(
-        f"Run {summary.import_run_id}: {summary.row_count} rows, "
-        f"{summary.created} created, {summary.updated} updated, "
-        f"{summary.unchanged} unchanged, {summary.conflicts} conflicts, "
-        f"{summary.skipped} skipped"
-    )
-
 
 if __name__ == "__main__":
     raise SystemExit(main())
