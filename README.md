@@ -36,6 +36,9 @@ By default Adso uses `adso.sqlite` in the current directory. Pass `--db path/to/
 adso init
 adso import goodreads path/to/export.csv
 adso sync goodreads path/to/export.csv
+adso list --owned true --location Office
+adso search "winter society" --owned true --limit 10
+adso show GOODREADS_ID
 adso edit GOODREADS_ID --owned true --copy-count 1 --location Office --shelf-box A1
 adso report conflicts --output reports/conflicts.md
 adso report summary --output reports/summary.md

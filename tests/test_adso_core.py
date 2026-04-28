@@ -5,9 +5,10 @@ import json
 import sqlite3
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 from adso.catalogue import BookFilters, get_book, list_books, search_books
 from adso import db
@@ -237,6 +238,8 @@ class AdsoCoreTests(unittest.TestCase):
                         "Book Id": "2",
                         "Title": "The Left Hand of Darkness",
                         "Author": "Ursula K. Le Guin",
+                        "ISBN": '="0441478123"',
+                        "ISBN13": '="9780441478125"',
                         "Bookshelves": "fiction, science-fiction",
                         "My Review": "A remarkable novel about winter and society.",
                     }
@@ -252,16 +255,64 @@ class AdsoCoreTests(unittest.TestCase):
 
         search_results = search_books(self.conn, "winter")
         filtered_results = search_books(self.conn, "novel", BookFilters(owned=True))
+        field_searches = {
+            "title": search_books(self.conn, "darkness"),
+            "author": search_books(self.conn, "guin"),
+            "isbn": search_books(self.conn, "9780156001311"),
+            "shelves": search_books(self.conn, "science"),
+            "local_notes": search_books(self.conn, "lending"),
+            "location": search_books(self.conn, "office"),
+            "shelf_box": search_books(self.conn, "shelf"),
+        }
         book = get_book(self.conn, "2")
         missing = get_book(self.conn, "missing")
 
         self.assertEqual([result["goodreads_id"] for result in search_results], ["2"])
         self.assertEqual([result["goodreads_id"] for result in filtered_results], ["2"])
+        self.assertEqual([result["goodreads_id"] for result in field_searches["title"]], ["2"])
+        self.assertEqual([result["goodreads_id"] for result in field_searches["author"]], ["2"])
+        self.assertEqual([result["goodreads_id"] for result in field_searches["isbn"]], ["1"])
+        self.assertEqual([result["goodreads_id"] for result in field_searches["shelves"]], ["2"])
+        self.assertEqual([result["goodreads_id"] for result in field_searches["local_notes"]], ["2"])
+        self.assertEqual([result["goodreads_id"] for result in field_searches["location"]], ["2"])
+        self.assertEqual([result["goodreads_id"] for result in field_searches["shelf_box"]], ["2"])
         self.assertEqual(book["title"], "The Left Hand of Darkness")
         self.assertEqual(book["shelves"], ["fiction", "science-fiction"])
         self.assertTrue(book["owned"])
         self.assertEqual(book["location"], "Office")
         self.assertIsNone(missing)
+
+    def test_search_uses_fts5_when_available(self) -> None:
+        with patch("adso.catalogue._sqlite_supports_fts5", return_value=True), patch(
+            "adso.catalogue._search_books_fts", return_value=[{"goodreads_id": "fts"}]
+        ) as fts_search:
+            results = search_books(self.conn, "winter", BookFilters(owned=True))
+
+        self.assertEqual(results, [{"goodreads_id": "fts"}])
+        fts_search.assert_called_once()
+
+    def test_search_finds_review_text_with_fts_query(self) -> None:
+        csv_path = self.root / "goodreads.csv"
+        write_goodreads_csv(
+            csv_path,
+            [
+                row(),
+                row(
+                    **{
+                        "Book Id": "2",
+                        "Title": "The Left Hand of Darkness",
+                        "Author": "Ursula K. Le Guin",
+                        "My Review": "A remarkable novel about winter and society.",
+                    }
+                ),
+            ],
+        )
+        import_goodreads_csv(self.conn, csv_path, mode="import")
+
+        self.assertEqual(
+            [result["goodreads_id"] for result in search_books(self.conn, "winter society")],
+            ["2"],
+        )
 
     def test_cli_list_outputs_readable_rows_and_filters(self) -> None:
         csv_path = self.root / "goodreads.csv"
@@ -298,9 +349,67 @@ class AdsoCoreTests(unittest.TestCase):
         self.assertNotIn("The Name of the Rose", filtered)
         self.assertEqual(no_match.strip(), "No books found.")
 
+    def test_cli_search_outputs_readable_rows_and_filters(self) -> None:
+        csv_path = self.root / "goodreads.csv"
+        db_path = self.root / "cli-search.sqlite"
+        write_goodreads_csv(
+            csv_path,
+            [
+                row(),
+                row(
+                    **{
+                        "Book Id": "2",
+                        "Title": "The Left Hand of Darkness",
+                        "Author": "Ursula K. Le Guin",
+                        "Bookshelves": "fiction, science-fiction",
+                        "My Review": "A remarkable novel about winter and society.",
+                    }
+                ),
+            ],
+        )
+        _run_cli(["--db", str(db_path), "import", "goodreads", str(csv_path)])
+        conn = db.connect(db_path)
+        db.update_local_fields(conn, "2", {"owned": 1, "location": "Office", "local_notes": "Lending copy"})
+        conn.close()
+
+        output = _run_cli(["--db", str(db_path), "search", "winter", "--owned", "true", "--limit", "1"])
+        no_match = _run_cli(["--db", str(db_path), "search", "winter", "--author", "Eco"])
+
+        self.assertIn("Goodreads ID", output)
+        self.assertIn("The Left Hand of Darkness", output)
+        self.assertIn("Office", output)
+        self.assertNotIn("The Name of the Rose", output)
+        self.assertEqual(no_match.strip(), "No books found.")
+
+    def test_cli_show_outputs_grouped_detail_and_missing_book_error(self) -> None:
+        csv_path = self.root / "goodreads.csv"
+        db_path = self.root / "cli-show.sqlite"
+        write_goodreads_csv(csv_path, [row(**{"My Rating": "5", "Date Read": "2026/04/28"})])
+        _run_cli(["--db", str(db_path), "import", "goodreads", str(csv_path)])
+        conn = db.connect(db_path)
+        db.update_local_fields(
+            conn,
+            "1",
+            {"owned": 1, "copy_count": 1, "location": "Office", "shelf_box": "A1", "local_notes": "Keeper"},
+        )
+        conn.close()
+
+        output = _run_cli(["--db", str(db_path), "show", "1"])
+
+        self.assertIn("Goodreads Fields", output)
+        self.assertIn("Local Catalogue Fields", output)
+        self.assertIn("Title: The Name of the Rose", output)
+        self.assertIn("Rating: 5", output)
+        self.assertIn("Owned: yes", output)
+        self.assertIn("Shelf/Box: A1", output)
+        with self.assertRaises(SystemExit) as raised:
+            _run_cli(["--db", str(db_path), "show", "missing"])
+        self.assertEqual(raised.exception.code, 2)
+
 def _run_cli(argv: list[str]) -> str:
     stdout = StringIO()
-    with redirect_stdout(stdout):
+    stderr = StringIO()
+    with redirect_stdout(stdout), redirect_stderr(stderr):
         exit_code = cli_main(argv)
     if exit_code != 0:
         raise AssertionError(f"CLI returned {exit_code}")
