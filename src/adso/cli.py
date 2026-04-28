@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 
 from . import db
+from .catalogue import BookFilters, list_books
 from .exports import export_csv, export_json
 from .notion import NotionConfigError, export_to_notion
 from .reports import (
@@ -32,6 +33,11 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         db.initialize(conn)
+
+        if args.command == "list":
+            books = list_books(conn, _book_filters_from_args(args))
+            print(_format_book_table(books))
+            return 0
 
         if args.command == "import" and args.source == "goodreads":
             summary = import_goodreads_csv(conn, args.csv, mode="import")
@@ -103,6 +109,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("init", help="Initialize the local catalogue database")
 
+    list_parser = subparsers.add_parser("list", help="List books in the local catalogue")
+    list_parser.add_argument("--status", help="Filter by reading status, e.g. 'Read' or 'To Read'")
+    list_parser.add_argument("--owned", choices=["true", "false"], help="Filter by physical ownership")
+    list_parser.add_argument("--location", help="Filter by room or location")
+    list_parser.add_argument("--author", help="Filter by author")
+    list_parser.add_argument("--limit", type=int, help="Maximum number of books to show")
+
     import_parser = subparsers.add_parser("import", help="Import source data")
     import_sub = import_parser.add_subparsers(dest="source", required=True)
     goodreads_import = import_sub.add_parser("goodreads", help="Import a Goodreads CSV export")
@@ -158,6 +171,62 @@ def _local_updates_from_args(args) -> dict[str, object]:
     if not updates:
         raise SystemExit("No local fields provided to update.")
     return updates
+
+
+def _book_filters_from_args(args) -> BookFilters:
+    owned = None
+    if getattr(args, "owned", None) is not None:
+        owned = args.owned == "true"
+    return BookFilters(
+        status=getattr(args, "status", None),
+        owned=owned,
+        location=getattr(args, "location", None),
+        author=getattr(args, "author", None),
+        limit=getattr(args, "limit", None),
+    )
+
+
+def _format_book_table(books: list[dict[str, object]]) -> str:
+    if not books:
+        return "No books found."
+
+    rows = [
+        {
+            "Goodreads ID": str(book.get("goodreads_id") or ""),
+            "Title": str(book.get("title") or ""),
+            "Author": str(book.get("author") or ""),
+            "Status": str(book.get("reading_status") or ""),
+            "Owned": "yes" if book.get("owned") else "no",
+            "Location": str(book.get("location") or ""),
+        }
+        for book in books
+    ]
+    headers = ["Goodreads ID", "Title", "Author", "Status", "Owned", "Location"]
+    widths = {
+        header: min(
+            max(len(header), *(len(_truncate(row[header], 48)) for row in rows)),
+            48,
+        )
+        for header in headers
+    }
+    lines = [
+        "  ".join(header.ljust(widths[header]) for header in headers),
+        "  ".join("-" * widths[header] for header in headers),
+    ]
+    for row in rows:
+        lines.append(
+            "  ".join(_truncate(row[header], widths[header]).ljust(widths[header]) for header in headers)
+        )
+    return "\n".join(lines)
+
+
+def _truncate(value: str, width: int) -> str:
+    if len(value) <= width:
+        return value
+    if width <= 1:
+        return value[:width]
+    return value[: width - 1] + "…"
+
 
 if __name__ == "__main__":
     raise SystemExit(main())
