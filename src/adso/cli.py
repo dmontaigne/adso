@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 
 from . import db
-from .catalogue import BookFilters, list_books
+from .catalogue import BookFilters, get_book, list_books, search_books
 from .exports import export_csv, export_json
 from .notion import NotionConfigError, export_to_notion
 from .reports import (
@@ -37,6 +37,18 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "list":
             books = list_books(conn, _book_filters_from_args(args))
             print(_format_book_table(books))
+            return 0
+
+        if args.command == "search":
+            books = search_books(conn, args.query, _book_filters_from_args(args))
+            print(_format_book_table(books))
+            return 0
+
+        if args.command == "show":
+            book = get_book(conn, args.goodreads_id)
+            if book is None:
+                parser.error(f"No book found for Goodreads ID {args.goodreads_id}")
+            print(_format_book_detail(book))
             return 0
 
         if args.command == "import" and args.source == "goodreads":
@@ -115,6 +127,17 @@ def _build_parser() -> argparse.ArgumentParser:
     list_parser.add_argument("--location", help="Filter by room or location")
     list_parser.add_argument("--author", help="Filter by author")
     list_parser.add_argument("--limit", type=int, help="Maximum number of books to show")
+
+    search_parser = subparsers.add_parser("search", help="Search books in the local catalogue")
+    search_parser.add_argument("query", help="Search query")
+    search_parser.add_argument("--status", help="Filter by reading status, e.g. 'Read' or 'To Read'")
+    search_parser.add_argument("--owned", choices=["true", "false"], help="Filter by physical ownership")
+    search_parser.add_argument("--location", help="Filter by room or location")
+    search_parser.add_argument("--author", help="Filter by author")
+    search_parser.add_argument("--limit", type=int, help="Maximum number of books to show")
+
+    show_parser = subparsers.add_parser("show", help="Show detailed information for one book")
+    show_parser.add_argument("goodreads_id", help="Goodreads Book ID")
 
     import_parser = subparsers.add_parser("import", help="Import source data")
     import_sub = import_parser.add_subparsers(dest="source", required=True)
@@ -218,6 +241,65 @@ def _format_book_table(books: list[dict[str, object]]) -> str:
             "  ".join(_truncate(row[header], widths[header]).ljust(widths[header]) for header in headers)
         )
     return "\n".join(lines)
+
+
+def _format_book_detail(book: dict[str, object]) -> str:
+    shelves = book.get("shelves") or []
+    if isinstance(shelves, list):
+        shelves_text = ", ".join(str(shelf) for shelf in shelves)
+    else:
+        shelves_text = str(shelves)
+
+    sections = [
+        (
+            "Goodreads Fields",
+            [
+                ("Goodreads ID", book.get("goodreads_id")),
+                ("Title", book.get("title")),
+                ("Author", book.get("author")),
+                ("Additional Authors", book.get("additional_authors")),
+                ("ISBN-10", book.get("isbn10")),
+                ("ISBN-13", book.get("isbn13")),
+                ("Reading Status", book.get("reading_status")),
+                ("Exclusive Shelf", book.get("exclusive_shelf")),
+                ("Shelves", shelves_text),
+                ("Rating", book.get("rating")),
+                ("Average Rating", book.get("average_rating")),
+                ("Date Read", book.get("date_read")),
+                ("Date Added", book.get("date_added")),
+                ("Read Count", book.get("read_count")),
+                ("Owned Copies", book.get("owned_copies")),
+                ("Review", book.get("my_review")),
+                ("Private Notes", book.get("private_notes")),
+            ],
+        ),
+        (
+            "Local Catalogue Fields",
+            [
+                ("Owned", "yes" if book.get("owned") else "no"),
+                ("Copy Count", book.get("copy_count")),
+                ("Location", book.get("location")),
+                ("Shelf/Box", book.get("shelf_box")),
+                ("Loaned To", book.get("loaned_to")),
+                ("Local Notes", book.get("local_notes")),
+            ],
+        ),
+    ]
+    lines: list[str] = []
+    for section, fields in sections:
+        if lines:
+            lines.append("")
+        lines.append(section)
+        lines.append("-" * len(section))
+        for label, value in fields:
+            lines.append(f"{label}: {_display_value(value)}")
+    return "\n".join(lines)
+
+
+def _display_value(value: object) -> str:
+    if value is None or value == "":
+        return "-"
+    return str(value)
 
 
 def _truncate(value: str, width: int) -> str:

@@ -69,6 +69,9 @@ def search_books(
         return list_books(conn, filters)
 
     filters = filters or BookFilters()
+    if _sqlite_supports_fts5(conn):
+        return _search_books_fts(conn, query, filters)
+
     where, params = _filter_sql(filters)
     search_where, search_params = _search_sql(query)
     if where:
@@ -96,22 +99,89 @@ def get_book(conn: sqlite3.Connection, goodreads_id: str) -> dict[str, Any] | No
     return _book_result(row)
 
 
-def _filter_sql(filters: BookFilters) -> tuple[str, list[Any]]:
+def _search_books_fts(
+    conn: sqlite3.Connection,
+    query: str,
+    filters: BookFilters,
+) -> list[dict[str, Any]]:
+    fts_query = _fts_query(query)
+    if not fts_query:
+        return list_books(conn, filters)
+
+    _ensure_search_fts(conn)
+    where, params = _filter_sql(filters, table_prefix="books")
+    if where:
+        combined_where = f"{where} AND adso_books_fts MATCH ?"
+    else:
+        combined_where = "WHERE adso_books_fts MATCH ?"
+    limit_sql = _limit_sql(filters)
+
+    rows = conn.execute(
+        f"""
+        SELECT books.*
+        FROM books
+        JOIN temp.adso_books_fts ON adso_books_fts.rowid = books.id
+        {combined_where}
+        ORDER BY bm25(adso_books_fts), books.title COLLATE NOCASE, books.author COLLATE NOCASE
+        {limit_sql}
+        """,
+        [*params, fts_query],
+    ).fetchall()
+    return [_book_result(row) for row in rows]
+
+
+def _sqlite_supports_fts5(conn: sqlite3.Connection) -> bool:
+    try:
+        conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS temp.adso_fts_probe USING fts5(value)")
+        return True
+    except sqlite3.OperationalError:
+        return False
+
+
+def _ensure_search_fts(conn: sqlite3.Connection) -> None:
+    fields_sql = ", ".join(SEARCH_FIELDS)
+    conn.execute(f"CREATE VIRTUAL TABLE IF NOT EXISTS temp.adso_books_fts USING fts5({fields_sql})")
+    conn.execute("DELETE FROM temp.adso_books_fts")
+    conn.execute(
+        f"""
+        INSERT INTO temp.adso_books_fts (rowid, {fields_sql})
+        SELECT id, {", ".join(f"COALESCE({field}, '')" for field in SEARCH_FIELDS)}
+        FROM books
+        """
+    )
+
+
+def _fts_query(query: str) -> str:
+    tokens = []
+    token = []
+    for char in query:
+        if char.isalnum():
+            token.append(char)
+        elif token:
+            tokens.append("".join(token))
+            token = []
+    if token:
+        tokens.append("".join(token))
+    return " ".join(f'"{token}"' for token in tokens)
+
+
+def _filter_sql(filters: BookFilters, table_prefix: str | None = None) -> tuple[str, list[Any]]:
     clauses: list[str] = []
     params: list[Any] = []
+    prefix = f"{table_prefix}." if table_prefix else ""
 
     if filters.status:
-        clauses.append("reading_status = ?")
+        clauses.append(f"{prefix}reading_status = ?")
         params.append(filters.status)
     if filters.owned is not None:
-        clauses.append("owned = ?")
+        clauses.append(f"{prefix}owned = ?")
         params.append(1 if filters.owned else 0)
     if filters.location:
-        clauses.append("location LIKE ? COLLATE NOCASE")
+        clauses.append(f"{prefix}location LIKE ? COLLATE NOCASE")
         params.append(f"%{filters.location}%")
     if filters.author:
         clauses.append(
-            "(author LIKE ? COLLATE NOCASE OR additional_authors LIKE ? COLLATE NOCASE)"
+            f"({prefix}author LIKE ? COLLATE NOCASE OR {prefix}additional_authors LIKE ? COLLATE NOCASE)"
         )
         author_query = f"%{filters.author}%"
         params.extend([author_query, author_query])
