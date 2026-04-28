@@ -21,6 +21,14 @@ adso export csv --output exports/catalogue.csv
 
 By default Adso uses `adso.sqlite` in the current directory. Pass `--db path/to/adso.sqlite` before the command to use another database.
 
+To try Adso without using a private Goodreads export, import the synthetic sample data:
+
+```bash
+adso import goodreads examples/goodreads_sample.csv
+adso list
+adso show 100001
+```
+
 ## Core Ideas
 
 - SQLite is canonical.

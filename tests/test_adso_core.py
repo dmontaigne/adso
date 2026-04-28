@@ -104,6 +104,35 @@ class AdsoCoreTests(unittest.TestCase):
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM books").fetchone()[0], 1)
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM raw_import_rows").fetchone()[0], 2)
 
+    def test_synthetic_goodreads_sample_imports_successfully(self) -> None:
+        sample_path = Path(__file__).resolve().parent.parent / "examples" / "goodreads_sample.csv"
+
+        summary = import_goodreads_csv(self.conn, sample_path, mode="import")
+        rows = self.conn.execute(
+            """
+            SELECT goodreads_id, title, reading_status, rating, date_read, isbn10, isbn13,
+                shelves_json, my_review, private_notes, owned_copies
+            FROM books
+            ORDER BY goodreads_id
+            """
+        ).fetchall()
+
+        self.assertEqual(summary.row_count, 3)
+        self.assertEqual(summary.created, 3)
+        self.assertEqual(summary.skipped, 0)
+        self.assertEqual(
+            [row["reading_status"] for row in rows],
+            ["Read", "Currently Reading", "To Read"],
+        )
+        self.assertEqual(rows[0]["rating"], 5)
+        self.assertEqual(rows[0]["date_read"], "2026-01-14")
+        self.assertEqual(rows[0]["isbn10"], "1935555012")
+        self.assertEqual(rows[0]["isbn13"], "9781935555010")
+        self.assertIn("botanical-mystery", rows[0]["shelves_json"])
+        self.assertIn("Invented sample row", rows[0]["my_review"])
+        self.assertIn("Synthetic demo note", rows[0]["private_notes"])
+        self.assertEqual(rows[0]["owned_copies"], 1)
+
     def test_safe_goodreads_activity_update_when_local_value_unchanged(self) -> None:
         csv_path = self.root / "goodreads.csv"
         write_goodreads_csv(csv_path, [row()])
