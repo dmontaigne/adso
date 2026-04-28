@@ -5,10 +5,13 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 from adso.catalogue import BookFilters, get_book, list_books, search_books
 from adso import db
+from adso.cli import main as cli_main
 from adso.exports import export_csv, export_json
 from adso.reports import latest_conflicts_markdown, latest_sync_summary_markdown
 from adso.sync import import_goodreads_csv
@@ -259,6 +262,49 @@ class AdsoCoreTests(unittest.TestCase):
         self.assertTrue(book["owned"])
         self.assertEqual(book["location"], "Office")
         self.assertIsNone(missing)
+
+    def test_cli_list_outputs_readable_rows_and_filters(self) -> None:
+        csv_path = self.root / "goodreads.csv"
+        db_path = self.root / "cli.sqlite"
+        write_goodreads_csv(
+            csv_path,
+            [
+                row(),
+                row(
+                    **{
+                        "Book Id": "2",
+                        "Title": "The Left Hand of Darkness",
+                        "Author": "Ursula K. Le Guin",
+                        "Exclusive Shelf": "read",
+                        "Bookshelves": "read, fiction",
+                    }
+                ),
+            ],
+        )
+        _run_cli(["--db", str(db_path), "import", "goodreads", str(csv_path)])
+        conn = db.connect(db_path)
+        db.update_local_fields(conn, "2", {"owned": 1, "location": "Office"})
+        conn.close()
+
+        output = _run_cli(["--db", str(db_path), "list"])
+        filtered = _run_cli(["--db", str(db_path), "list", "--owned", "true", "--location", "office"])
+        no_match = _run_cli(["--db", str(db_path), "list", "--status", "Currently Reading"])
+
+        self.assertIn("Goodreads ID", output)
+        self.assertIn("The Left Hand of Darkness", output)
+        self.assertIn("The Name of the Rose", output)
+        self.assertIn("Office", filtered)
+        self.assertIn("yes", filtered)
+        self.assertNotIn("The Name of the Rose", filtered)
+        self.assertEqual(no_match.strip(), "No books found.")
+
+def _run_cli(argv: list[str]) -> str:
+    stdout = StringIO()
+    with redirect_stdout(stdout):
+        exit_code = cli_main(argv)
+    if exit_code != 0:
+        raise AssertionError(f"CLI returned {exit_code}")
+    return stdout.getvalue()
 
 
 if __name__ == "__main__":
