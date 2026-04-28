@@ -1,0 +1,19 @@
+[project]
+name = "adso"
+version = "0.1.0"
+description = "Local-first Goodreads backup and personal library catalogue sync tool."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.optional-dependencies]
+notion = [
+  "requests>=2.31",
+  "python-dotenv>=1.0",
+]
+
+[project.scripts]
+adso = "adso.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

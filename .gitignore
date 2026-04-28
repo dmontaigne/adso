@@ -1,0 +1,17 @@
+.env
+.venv/
+venv/
+goodreads_library_export.csv
+*.local.csv
+__pycache__/
+*.py[cod]
+*.sqlite
+*.sqlite3
+*.db
+.pytest_cache/
+.mypy_cache/
+dist/
+build/
+*.egg-info/
+reports/
+exports/

@@ -1,0 +1,368 @@
+"""SQLite persistence for Adso."""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from collections.abc import Iterable
+from pathlib import Path
+from typing import Any
+
+
+GOODREADS_FIELDS = (
+    "title",
+    "author",
+    "additional_authors",
+    "isbn10",
+    "isbn13",
+    "publisher",
+    "binding",
+    "number_of_pages",
+    "year_published",
+    "original_publication_year",
+    "rating",
+    "average_rating",
+    "reading_status",
+    "exclusive_shelf",
+    "shelves_json",
+    "date_read",
+    "date_added",
+    "my_review",
+    "private_notes",
+    "read_count",
+    "owned_copies",
+)
+
+LOCAL_FIELDS = (
+    "owned",
+    "copy_count",
+    "location",
+    "shelf_box",
+    "loaned_to",
+    "local_notes",
+)
+
+
+def connect(db_path: str | Path) -> sqlite3.Connection:
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
+def initialize(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS import_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source TEXT NOT NULL,
+            source_path TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            row_count INTEGER NOT NULL DEFAULT 0,
+            created_count INTEGER NOT NULL DEFAULT 0,
+            updated_count INTEGER NOT NULL DEFAULT 0,
+            unchanged_count INTEGER NOT NULL DEFAULT 0,
+            conflict_count INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS books (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            goodreads_id TEXT UNIQUE,
+            title TEXT NOT NULL,
+            author TEXT,
+            additional_authors TEXT,
+            isbn10 TEXT,
+            isbn13 TEXT,
+            publisher TEXT,
+            binding TEXT,
+            number_of_pages INTEGER,
+            year_published INTEGER,
+            original_publication_year INTEGER,
+            rating INTEGER,
+            average_rating TEXT,
+            reading_status TEXT,
+            exclusive_shelf TEXT,
+            shelves_json TEXT NOT NULL DEFAULT '[]',
+            date_read TEXT,
+            date_added TEXT,
+            my_review TEXT,
+            private_notes TEXT,
+            read_count INTEGER,
+            owned_copies INTEGER,
+            owned INTEGER NOT NULL DEFAULT 0,
+            copy_count INTEGER NOT NULL DEFAULT 0,
+            location TEXT,
+            shelf_box TEXT,
+            loaned_to TEXT,
+            local_notes TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            last_goodreads_import_run_id INTEGER,
+            FOREIGN KEY(last_goodreads_import_run_id) REFERENCES import_runs(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS source_snapshots (
+            book_id INTEGER NOT NULL,
+            source TEXT NOT NULL,
+            field_name TEXT NOT NULL,
+            field_value TEXT,
+            import_run_id INTEGER NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(book_id, source, field_name),
+            FOREIGN KEY(book_id) REFERENCES books(id) ON DELETE CASCADE,
+            FOREIGN KEY(import_run_id) REFERENCES import_runs(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS raw_import_rows (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            import_run_id INTEGER NOT NULL,
+            source TEXT NOT NULL,
+            source_record_id TEXT,
+            row_index INTEGER NOT NULL,
+            raw_json TEXT NOT NULL,
+            normalized_json TEXT NOT NULL,
+            FOREIGN KEY(import_run_id) REFERENCES import_runs(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS sync_conflicts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            import_run_id INTEGER NOT NULL,
+            book_id INTEGER NOT NULL,
+            source TEXT NOT NULL,
+            field_name TEXT NOT NULL,
+            old_source_value TEXT,
+            local_value TEXT,
+            incoming_value TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(import_run_id) REFERENCES import_runs(id) ON DELETE CASCADE,
+            FOREIGN KEY(book_id) REFERENCES books(id) ON DELETE CASCADE
+        );
+        """
+    )
+    conn.commit()
+
+
+def create_import_run(
+    conn: sqlite3.Connection,
+    *,
+    source: str,
+    source_path: str,
+    mode: str,
+    row_count: int,
+) -> int:
+    cur = conn.execute(
+        """
+        INSERT INTO import_runs (source, source_path, mode, row_count)
+        VALUES (?, ?, ?, ?)
+        """,
+        (source, source_path, mode, row_count),
+    )
+    return int(cur.lastrowid)
+
+
+def update_import_run_counts(
+    conn: sqlite3.Connection,
+    import_run_id: int,
+    *,
+    created: int,
+    updated: int,
+    unchanged: int,
+    conflicts: int,
+) -> None:
+    conn.execute(
+        """
+        UPDATE import_runs
+        SET created_count = ?, updated_count = ?, unchanged_count = ?, conflict_count = ?
+        WHERE id = ?
+        """,
+        (created, updated, unchanged, conflicts, import_run_id),
+    )
+
+
+def get_book_by_goodreads_id(conn: sqlite3.Connection, goodreads_id: str) -> sqlite3.Row | None:
+    cur = conn.execute("SELECT * FROM books WHERE goodreads_id = ?", (goodreads_id,))
+    return cur.fetchone()
+
+
+def get_book(conn: sqlite3.Connection, book_id: int) -> sqlite3.Row | None:
+    cur = conn.execute("SELECT * FROM books WHERE id = ?", (book_id,))
+    return cur.fetchone()
+
+
+def iter_books(conn: sqlite3.Connection) -> Iterable[sqlite3.Row]:
+    yield from conn.execute("SELECT * FROM books ORDER BY title COLLATE NOCASE, author COLLATE NOCASE")
+
+
+def row_to_catalogue_dict(row: sqlite3.Row) -> dict[str, Any]:
+    data = dict(row)
+    data["shelves"] = json.loads(data.pop("shelves_json") or "[]")
+    return data
+
+
+def serialize_value(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, sort_keys=True)
+    return str(value)
+
+
+def insert_raw_row(
+    conn: sqlite3.Connection,
+    *,
+    import_run_id: int,
+    source: str,
+    row_index: int,
+    source_record_id: str,
+    raw: dict[str, str],
+    normalized: dict[str, Any],
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO raw_import_rows
+            (import_run_id, source, source_record_id, row_index, raw_json, normalized_json)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            import_run_id,
+            source,
+            source_record_id,
+            row_index,
+            json.dumps(raw, sort_keys=True),
+            json.dumps(normalized, sort_keys=True),
+        ),
+    )
+
+
+def insert_book_from_goodreads(
+    conn: sqlite3.Connection,
+    normalized: dict[str, Any],
+    *,
+    import_run_id: int,
+) -> int:
+    columns = ["goodreads_id", *GOODREADS_FIELDS, "last_goodreads_import_run_id"]
+    values = [normalized.get("goodreads_id")]
+    values.extend(normalized.get(field) for field in GOODREADS_FIELDS)
+    values.append(import_run_id)
+    placeholders = ", ".join("?" for _ in columns)
+    cur = conn.execute(
+        f"INSERT INTO books ({', '.join(columns)}) VALUES ({placeholders})",
+        values,
+    )
+    book_id = int(cur.lastrowid)
+    upsert_source_snapshots(conn, book_id, "goodreads", normalized, import_run_id)
+    return book_id
+
+
+def update_book_goodreads_fields(
+    conn: sqlite3.Connection,
+    book_id: int,
+    updates: dict[str, Any],
+    *,
+    import_run_id: int,
+) -> None:
+    if not updates:
+        return
+    assignments = [f"{field} = ?" for field in updates]
+    values = list(updates.values())
+    assignments.append("last_goodreads_import_run_id = ?")
+    values.append(import_run_id)
+    assignments.append("updated_at = CURRENT_TIMESTAMP")
+    values.append(book_id)
+    conn.execute(
+        f"UPDATE books SET {', '.join(assignments)} WHERE id = ?",
+        values,
+    )
+
+
+def update_local_fields(
+    conn: sqlite3.Connection,
+    goodreads_id: str,
+    updates: dict[str, Any],
+) -> None:
+    invalid = [field for field in updates if field not in LOCAL_FIELDS]
+    if invalid:
+        raise ValueError(f"Unsupported local fields: {', '.join(invalid)}")
+    if not updates:
+        return
+    book = get_book_by_goodreads_id(conn, goodreads_id)
+    if book is None:
+        raise ValueError(f"No book found for Goodreads ID {goodreads_id}")
+    assignments = [f"{field} = ?" for field in updates]
+    values = list(updates.values())
+    assignments.append("updated_at = CURRENT_TIMESTAMP")
+    values.append(book["id"])
+    conn.execute(f"UPDATE books SET {', '.join(assignments)} WHERE id = ?", values)
+    conn.commit()
+
+
+def get_source_snapshot(
+    conn: sqlite3.Connection,
+    book_id: int,
+    source: str,
+    field_name: str,
+) -> str | None:
+    cur = conn.execute(
+        """
+        SELECT field_value FROM source_snapshots
+        WHERE book_id = ? AND source = ? AND field_name = ?
+        """,
+        (book_id, source, field_name),
+    )
+    row = cur.fetchone()
+    return row["field_value"] if row else None
+
+
+def upsert_source_snapshots(
+    conn: sqlite3.Connection,
+    book_id: int,
+    source: str,
+    normalized: dict[str, Any],
+    import_run_id: int,
+    fields: Iterable[str] = GOODREADS_FIELDS,
+) -> None:
+    for field in fields:
+        conn.execute(
+            """
+            INSERT INTO source_snapshots
+                (book_id, source, field_name, field_value, import_run_id)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(book_id, source, field_name)
+            DO UPDATE SET
+                field_value = excluded.field_value,
+                import_run_id = excluded.import_run_id,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (book_id, source, field, serialize_value(normalized.get(field)), import_run_id),
+        )
+
+
+def add_conflict(
+    conn: sqlite3.Connection,
+    *,
+    import_run_id: int,
+    book_id: int,
+    source: str,
+    field_name: str,
+    old_source_value: Any,
+    local_value: Any,
+    incoming_value: Any,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO sync_conflicts
+            (import_run_id, book_id, source, field_name, old_source_value, local_value, incoming_value)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            import_run_id,
+            book_id,
+            source,
+            field_name,
+            serialize_value(old_source_value),
+            serialize_value(local_value),
+            serialize_value(incoming_value),
+        ),
+    )
