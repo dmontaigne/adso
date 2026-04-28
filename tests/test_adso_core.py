@@ -13,6 +13,7 @@ from unittest.mock import patch
 from adso.catalogue import BookFilters, get_book, list_books, search_books
 from adso import db
 from adso.cli import main as cli_main
+from adso.doctor import doctor_report
 from adso.exports import export_csv, export_json
 from adso.reports import latest_conflicts_markdown, latest_sync_summary_markdown
 from adso.sync import import_goodreads_csv
@@ -132,6 +133,63 @@ class AdsoCoreTests(unittest.TestCase):
         self.assertIn("Invented sample row", rows[0]["my_review"])
         self.assertIn("Synthetic demo note", rows[0]["private_notes"])
         self.assertEqual(rows[0]["owned_copies"], 1)
+
+    def test_doctor_reports_brand_new_folder_without_creating_database(self) -> None:
+        db_path = self.root / "brand-new.sqlite"
+        csv_path = self.root / "goodreads_export.csv"
+        write_goodreads_csv(csv_path, [row()])
+
+        output = doctor_report(db_path, root=self.root, env={})
+
+        self.assertFalse(db_path.exists())
+        self.assertIn("Database file: no", output)
+        self.assertIn("Initialized: no", output)
+        self.assertIn("- goodreads_export.csv", output)
+        self.assertIn("Credentials configured: no", output)
+        self.assertIn("adso init", output)
+
+    def test_doctor_reports_empty_initialized_database(self) -> None:
+        output = doctor_report(self.root / "adso.sqlite", root=self.root, env={})
+
+        self.assertIn("Database file: yes", output)
+        self.assertIn("Initialized: yes", output)
+        self.assertIn("Books: 0", output)
+        self.assertIn("Latest import: none yet", output)
+        self.assertIn("Pending conflicts: 0", output)
+        self.assertIn("adso import goodreads examples/goodreads_sample.csv", output)
+
+    def test_doctor_reports_imported_catalogue_and_notion_config(self) -> None:
+        csv_path = self.root / "goodreads.csv"
+        write_goodreads_csv(csv_path, [row()])
+        import_goodreads_csv(self.conn, csv_path, mode="import")
+
+        output = doctor_report(
+            self.root / "adso.sqlite",
+            root=self.root,
+            env={"NOTION_API_KEY": "secret-value", "NOTION_DB_ID": "database-id"},
+        )
+
+        self.assertIn("Books: 1", output)
+        self.assertIn("Latest import: import from goodreads", output)
+        self.assertIn("Pending conflicts: 0", output)
+        self.assertIn("Credentials configured: yes", output)
+        self.assertNotIn("secret-value", output)
+        self.assertIn("adso export notion", output)
+
+    def test_doctor_prioritizes_pending_conflicts(self) -> None:
+        csv_path = self.root / "goodreads.csv"
+        write_goodreads_csv(csv_path, [row()])
+        import_goodreads_csv(self.conn, csv_path, mode="import")
+        self.conn.execute("UPDATE books SET reading_status = ? WHERE goodreads_id = ?", ("Local Status", "1"))
+        self.conn.commit()
+        changed_path = self.root / "goodreads-changed.csv"
+        write_goodreads_csv(changed_path, [row(**{"Exclusive Shelf": "read", "Bookshelves": "read"})])
+        import_goodreads_csv(self.conn, changed_path, mode="sync")
+
+        output = doctor_report(self.root / "adso.sqlite", root=self.root, env={})
+
+        self.assertIn("Pending conflicts: 1", output)
+        self.assertIn("adso report conflicts", output)
 
     def test_safe_goodreads_activity_update_when_local_value_unchanged(self) -> None:
         csv_path = self.root / "goodreads.csv"
@@ -434,6 +492,15 @@ class AdsoCoreTests(unittest.TestCase):
         with self.assertRaises(SystemExit) as raised:
             _run_cli(["--db", str(db_path), "show", "missing"])
         self.assertEqual(raised.exception.code, 2)
+
+    def test_cli_doctor_reports_without_initializing_database(self) -> None:
+        db_path = self.root / "cli-doctor.sqlite"
+
+        output = _run_cli(["--db", str(db_path), "doctor"])
+
+        self.assertFalse(db_path.exists())
+        self.assertIn("Adso Doctor", output)
+        self.assertIn("Database file: no", output)
 
 def _run_cli(argv: list[str]) -> str:
     stdout = StringIO()

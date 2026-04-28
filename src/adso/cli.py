@@ -7,6 +7,7 @@ from pathlib import Path
 
 from . import db
 from .catalogue import BookFilters, get_book, list_books, search_books
+from .doctor import doctor_report
 from .exports import export_csv, export_json
 from .notion import NotionConfigError, export_to_notion
 from .reports import (
@@ -24,6 +25,10 @@ DEFAULT_DB = "adso.sqlite"
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
+
+    if args.command == "doctor":
+        print(doctor_report(args.db))
+        return 0
 
     conn = db.connect(args.db)
     try:
@@ -120,6 +125,7 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("init", help="Initialize the local catalogue database")
+    subparsers.add_parser("doctor", help="Check local Adso setup and suggest next commands")
 
     list_parser = subparsers.add_parser("list", help="List books in the local catalogue")
     list_parser.add_argument("--status", help="Filter by reading status, e.g. 'Read' or 'To Read'")

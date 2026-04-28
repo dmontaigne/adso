@@ -42,6 +42,7 @@ adso show 100001
 
 ```bash
 adso init
+adso doctor
 adso import goodreads path/to/export.csv
 adso sync goodreads path/to/export.csv
 adso list --owned true --location Office
