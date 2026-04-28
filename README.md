@@ -29,6 +29,8 @@ adso list
 adso show 100001
 ```
 
+For a fuller public-safe walkthrough, see [examples/demo.md](examples/demo.md).
+
 ## Core Ideas
 
 - SQLite is canonical.
