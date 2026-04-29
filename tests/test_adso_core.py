@@ -3,8 +3,10 @@ from __future__ import annotations
 import csv
 import json
 import sqlite3
+import sys
 import tempfile
 import unittest
+from builtins import __import__ as real_import
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
@@ -14,6 +16,7 @@ from adso.catalogue import BookFilters, get_book, list_books, search_books
 from adso import db
 from adso.cli import main as cli_main
 from adso.doctor import doctor_report
+from adso.notion import NotionConfigError, _load_existing_pages, export_to_notion
 from adso.exports import export_csv, export_json
 from adso.reports import latest_conflicts_markdown, latest_sync_summary_markdown
 from adso.sync import import_goodreads_csv
@@ -78,6 +81,34 @@ def row(**overrides: str) -> dict[str, str]:
     }
     data.update(overrides)
     return data
+
+
+class FakeNotionResponse:
+    def __init__(
+        self,
+        data: dict[str, object] | None = None,
+        *,
+        status_code: int = 200,
+        text: str = "",
+    ) -> None:
+        self._data = data or {}
+        self.status_code = status_code
+        self.text = text
+        self.headers: dict[str, str] = {}
+
+    def json(self) -> dict[str, object]:
+        return self._data
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise RuntimeError(self.text or f"HTTP {self.status_code}")
+        return None
+
+
+class FakeRequestsModule:
+    @staticmethod
+    def request(*args, **kwargs):
+        raise RuntimeError("DNS lookup failed")
 
 
 class AdsoCoreTests(unittest.TestCase):
@@ -267,6 +298,190 @@ class AdsoCoreTests(unittest.TestCase):
         data = json.loads(json_path.read_text(encoding="utf-8"))
         self.assertEqual(data[0]["title"], "The Name of the Rose")
         self.assertIn("goodreads_id,title,author", csv_export_path.read_text(encoding="utf-8"))
+
+    def test_notion_dry_run_reports_create_update_without_writes(self) -> None:
+        csv_path = self.root / "goodreads.csv"
+        write_goodreads_csv(
+            csv_path,
+            [
+                row(),
+                row(
+                    **{
+                        "Book Id": "2",
+                        "Title": "The Left Hand of Darkness",
+                        "Author": "Ursula K. Le Guin",
+                    }
+                ),
+            ],
+        )
+        import_goodreads_csv(self.conn, csv_path, mode="import")
+
+        with patch.dict(sys.modules, {"requests": object()}), patch(
+            "adso.notion._load_existing_pages", return_value={"2": "page-id"}
+        ), patch("adso.notion._request") as request:
+            result = export_to_notion(
+                self.conn,
+                api_key="secret",
+                database_id="database",
+                dry_run=True,
+            )
+
+        self.assertEqual(result["created"], 1)
+        self.assertEqual(result["updated"], 1)
+        self.assertEqual(result["errors"], 0)
+        self.assertEqual(
+            [(action["action"], action["goodreads_id"]) for action in result["actions"]],
+            [("update", "2"), ("create", "1")],
+        )
+        request.assert_not_called()
+
+    def test_notion_limit_applies_before_writes(self) -> None:
+        csv_path = self.root / "goodreads.csv"
+        write_goodreads_csv(
+            csv_path,
+            [
+                row(),
+                row(
+                    **{
+                        "Book Id": "2",
+                        "Title": "The Left Hand of Darkness",
+                        "Author": "Ursula K. Le Guin",
+                    }
+                ),
+            ],
+        )
+        import_goodreads_csv(self.conn, csv_path, mode="import")
+
+        with patch.dict(sys.modules, {"requests": object()}), patch(
+            "adso.notion._load_existing_pages", return_value={"2": "page-id"}
+        ), patch("adso.notion._request", return_value=FakeNotionResponse()) as request, patch(
+            "adso.notion.time.sleep"
+        ):
+            result = export_to_notion(
+                self.conn,
+                api_key="secret",
+                database_id="database",
+                limit=1,
+            )
+
+        self.assertEqual(result["created"], 0)
+        self.assertEqual(result["updated"], 1)
+        self.assertEqual(result["errors"], 0)
+        self.assertEqual(
+            result["actions"],
+            [{"action": "update", "goodreads_id": "2", "title": "The Left Hand of Darkness"}],
+        )
+        request.assert_called_once()
+
+    def test_notion_existing_page_lookup_uses_goodreads_id(self) -> None:
+        response = FakeNotionResponse(
+            {
+                "results": [
+                    {
+                        "id": "page-one",
+                        "properties": {
+                            "Goodreads ID": {"rich_text": [{"plain_text": "1"}]},
+                        },
+                    },
+                    {
+                        "id": "page-without-goodreads-id",
+                        "properties": {
+                            "Goodreads ID": {"rich_text": []},
+                        },
+                    },
+                ],
+                "has_more": False,
+            }
+        )
+
+        with patch("adso.notion._request", return_value=response) as request, patch("adso.notion.time.sleep"):
+            existing = _load_existing_pages("secret", "database")
+
+        self.assertEqual(existing, {"1": "page-one"})
+        request.assert_called_once_with(
+            "secret",
+            "post",
+            "https://api.notion.com/v1/databases/database/query",
+            json={"page_size": 100},
+        )
+
+    def test_notion_create_and_update_request_shapes(self) -> None:
+        csv_path = self.root / "goodreads.csv"
+        write_goodreads_csv(
+            csv_path,
+            [
+                row(),
+                row(
+                    **{
+                        "Book Id": "2",
+                        "Title": "The Left Hand of Darkness",
+                        "Author": "Ursula K. Le Guin",
+                    }
+                ),
+            ],
+        )
+        import_goodreads_csv(self.conn, csv_path, mode="import")
+
+        with patch.dict(sys.modules, {"requests": object()}), patch(
+            "adso.notion._load_existing_pages", return_value={"2": "page-id"}
+        ), patch("adso.notion._request", return_value=FakeNotionResponse()) as request, patch(
+            "adso.notion.time.sleep"
+        ):
+            result = export_to_notion(self.conn, api_key="secret", database_id="database")
+
+        self.assertEqual(result["created"], 1)
+        self.assertEqual(result["updated"], 1)
+        self.assertEqual(result["errors"], 0)
+        self.assertEqual(request.call_count, 2)
+        update_call, create_call = request.call_args_list
+        self.assertEqual(update_call.args[:3], ("secret", "patch", "https://api.notion.com/v1/pages/page-id"))
+        self.assertEqual(create_call.args[:3], ("secret", "post", "https://api.notion.com/v1/pages"))
+        self.assertEqual(create_call.kwargs["json"]["parent"], {"database_id": "database"})
+
+    def test_notion_reports_missing_credentials_and_optional_dependency(self) -> None:
+        def missing_requests_import(name, *args, **kwargs):
+            if name == "requests":
+                raise ModuleNotFoundError("No module named 'requests'")
+            return real_import(name, *args, **kwargs)
+
+        with patch("builtins.__import__", side_effect=missing_requests_import):
+            with self.assertRaisesRegex(NotionConfigError, "Install the requests dependency"):
+                export_to_notion(self.conn, api_key="secret", database_id="database")
+
+        with patch.dict(sys.modules, {"requests": object()}), patch.dict("adso.notion.os.environ", {}, clear=True):
+            with self.assertRaisesRegex(NotionConfigError, "NOTION_API_KEY and NOTION_DB_ID"):
+                export_to_notion(self.conn)
+
+    def test_notion_network_failure_reports_clean_error(self) -> None:
+        with patch.dict(sys.modules, {"requests": FakeRequestsModule}):
+            with self.assertRaisesRegex(NotionConfigError, "Could not reach the Notion API: DNS lookup failed"):
+                export_to_notion(self.conn, api_key="secret", database_id="database", dry_run=True)
+
+    def test_notion_lookup_http_error_reports_clean_error(self) -> None:
+        response = FakeNotionResponse(status_code=403, text='{"message":"restricted"}')
+
+        with patch("adso.notion._request", return_value=response):
+            with self.assertRaisesRegex(NotionConfigError, "Notion database lookup failed: 403"):
+                _load_existing_pages("secret", "database")
+
+    def test_notion_write_http_error_counts_error_without_traceback(self) -> None:
+        csv_path = self.root / "goodreads.csv"
+        write_goodreads_csv(csv_path, [row()])
+        import_goodreads_csv(self.conn, csv_path, mode="import")
+
+        with patch.dict(sys.modules, {"requests": object()}), patch(
+            "adso.notion._load_existing_pages", return_value={}
+        ), patch(
+            "adso.notion._request",
+            return_value=FakeNotionResponse(status_code=400, text='{"message":"missing property"}'),
+        ), patch(
+            "adso.notion.time.sleep"
+        ):
+            result = export_to_notion(self.conn, api_key="secret", database_id="database")
+
+        self.assertEqual(result["created"], 0)
+        self.assertEqual(result["updated"], 0)
+        self.assertEqual(result["errors"], 1)
 
     def test_catalogue_query_service_lists_filters_and_limits_books(self) -> None:
         csv_path = self.root / "goodreads.csv"
@@ -501,6 +716,31 @@ class AdsoCoreTests(unittest.TestCase):
         self.assertFalse(db_path.exists())
         self.assertIn("Adso Doctor", output)
         self.assertIn("Database file: no", output)
+
+    def test_cli_notion_dry_run_and_limit_output(self) -> None:
+        db_path = self.root / "cli-notion.sqlite"
+
+        with patch(
+            "adso.cli.export_to_notion",
+            return_value={
+                "created": 1,
+                "updated": 1,
+                "errors": 0,
+                "actions": [
+                    {"action": "create", "goodreads_id": "1", "title": "The Name of the Rose"},
+                    {"action": "update", "goodreads_id": "2", "title": "The Left Hand of Darkness"},
+                ],
+            },
+        ) as export:
+            output = _run_cli(["--db", str(db_path), "export", "notion", "--dry-run", "--limit", "2"])
+
+        export.assert_called_once()
+        self.assertTrue(export.call_args.kwargs["dry_run"])
+        self.assertEqual(export.call_args.kwargs["limit"], 2)
+        self.assertIn("Notion dry-run complete: 1 would be created, 1 would be updated, 0 errors", output)
+        self.assertIn("Would create: The Name of the Rose (Goodreads ID 1)", output)
+        self.assertIn("Would update: The Left Hand of Darkness (Goodreads ID 2)", output)
+
 
 def _run_cli(argv: list[str]) -> str:
     stdout = StringIO()

@@ -104,13 +104,10 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "export" and args.target == "notion":
             try:
-                result = export_to_notion(conn)
+                result = export_to_notion(conn, dry_run=args.dry_run, limit=args.limit)
             except NotionConfigError as exc:
                 parser.error(str(exc))
-            print(
-                "Notion export complete: "
-                f"{result['created']} created, {result['updated']} updated, {result['errors']} errors"
-            )
+            print(_format_notion_export_result(result, dry_run=args.dry_run))
             return 0
 
         parser.error("Unsupported command.")
@@ -177,7 +174,9 @@ def _build_parser() -> argparse.ArgumentParser:
     csv_export.add_argument("--output", default="exports/catalogue.csv")
     json_export = export_sub.add_parser("json", help="Export catalogue to JSON")
     json_export.add_argument("--output", default="exports/catalogue.json")
-    export_sub.add_parser("notion", help="Export catalogue to Notion")
+    notion_export = export_sub.add_parser("notion", help="Export catalogue to Notion")
+    notion_export.add_argument("--dry-run", action="store_true", help="Preview create/update actions without writing")
+    notion_export.add_argument("--limit", type=int, help="Maximum number of books to export")
 
     return parser
 
@@ -213,6 +212,32 @@ def _book_filters_from_args(args) -> BookFilters:
         author=getattr(args, "author", None),
         limit=getattr(args, "limit", None),
     )
+
+
+def _format_notion_export_result(result: dict[str, object], *, dry_run: bool) -> str:
+    created_label = "would be created" if dry_run else "created"
+    updated_label = "would be updated" if dry_run else "updated"
+    heading = "Notion dry-run complete" if dry_run else "Notion export complete"
+    lines = [
+        f"{heading}: "
+        f"{result['created']} {created_label}, {result['updated']} {updated_label}, {result['errors']} errors"
+    ]
+    if dry_run:
+        actions = result.get("actions", [])
+        if actions:
+            lines.append("")
+            lines.append("Planned Notion actions:")
+            for action in actions:
+                if not isinstance(action, dict):
+                    continue
+                verb = "Would update" if action.get("action") == "update" else "Would create"
+                title = action.get("title") or "Untitled"
+                goodreads_id = action.get("goodreads_id") or "unknown"
+                lines.append(f"- {verb}: {title} (Goodreads ID {goodreads_id})")
+        else:
+            lines.append("")
+            lines.append("No Notion actions planned.")
+    return "\n".join(lines)
 
 
 def _format_book_table(books: list[dict[str, object]]) -> str:
