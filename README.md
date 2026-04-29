@@ -55,7 +55,8 @@ adso report conflicts --output reports/conflicts.md
 adso report summary --output reports/summary.md
 adso export csv --output exports/catalogue.csv
 adso export json --output exports/catalogue.json
-adso export notion
+adso export notion --dry-run --limit 5
+adso export notion --limit 1
 ```
 
 `adso import goodreads` and `adso sync goodreads` both preserve raw import rows. `sync` additionally writes a conflict report when a Goodreads update would overwrite a local change.
@@ -76,3 +77,58 @@ export NOTION_DB_ID=...
 ```
 
 Notion export is intentionally an adapter: the local SQLite catalogue remains canonical.
+
+### Live-Test Checklist
+
+Before running against a real Notion database, confirm the database has these
+properties:
+
+- `Title` as title
+- `Goodreads ID`, `Author`, `ISBN`, `Location`, and `Shelf / Box` as text
+- `Source` and `Reading Status` as select
+- `Published Year` and `Rating` as number
+- `Date Read` as date
+- `Owned` as checkbox
+
+Run the first live test in this order:
+
+1. Preview planned writes without creating or updating pages:
+
+   ```bash
+   adso export notion --dry-run --limit 5
+   ```
+
+2. If the dry-run shows the expected create/update actions, write one page:
+
+   ```bash
+   adso export notion --limit 1
+   ```
+
+3. Inspect that Notion page, then run a larger limited batch:
+
+   ```bash
+   adso export notion --limit 5
+   ```
+
+4. Run the full export only after the limited batch looks right:
+
+   ```bash
+   adso export notion
+   ```
+
+Expected success signals:
+
+- Dry-run output says which pages would be created or updated.
+- The summary reports create, update, and error counts.
+- Limited exports only affect the requested number of books.
+- Re-running export updates existing Notion pages by `Goodreads ID` instead of creating duplicates.
+
+Troubleshooting:
+
+- Missing credentials: set `NOTION_API_KEY` and `NOTION_DB_ID` in the shell where
+  you run Adso.
+- Missing optional dependency: install with `pip install -e ".[notion]"`.
+- Missing Notion properties: add the property named in the Notion API error, then
+  retry with `--limit 1`.
+- API rate limits: Adso backs off for Notion `429` responses. If a large export is
+  still noisy, retry with a smaller `--limit` first.

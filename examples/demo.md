@@ -161,7 +161,8 @@ catalogue.
 If Notion credentials are configured, you can also export to Notion:
 
 ```bash
-adso --db "$ADSO_DEMO_DB" export notion
+adso --db "$ADSO_DEMO_DB" export notion --dry-run --limit 3
+adso --db "$ADSO_DEMO_DB" export notion --limit 1
 ```
 
 Notion remains an export surface. The SQLite catalogue is still canonical.

@@ -24,11 +24,21 @@ class NotionConfigError(RuntimeError):
     pass
 
 
-def export_to_notion(conn, *, api_key: str | None = None, database_id: str | None = None) -> dict[str, int]:
+def export_to_notion(
+    conn,
+    *,
+    api_key: str | None = None,
+    database_id: str | None = None,
+    dry_run: bool = False,
+    limit: int | None = None,
+) -> dict[str, Any]:
     try:
         import requests  # noqa: F401
     except ModuleNotFoundError as exc:
         raise NotionConfigError("Install the requests dependency before using Notion export.") from exc
+
+    if limit is not None and limit < 1:
+        raise NotionConfigError("limit must be at least 1.")
 
     api_key = api_key or os.getenv("NOTION_API_KEY")
     database_id = database_id or os.getenv("NOTION_DB_ID")
@@ -37,11 +47,28 @@ def export_to_notion(conn, *, api_key: str | None = None, database_id: str | Non
 
     existing = _load_existing_pages(api_key, database_id)
     created = updated = errors = 0
+    actions: list[dict[str, str]] = []
 
-    for row in db.iter_books(conn):
+    for index, row in enumerate(db.iter_books(conn)):
+        if limit is not None and index >= limit:
+            break
         book = db.row_to_catalogue_dict(row)
         properties = _build_properties(book)
         page_id = existing.get(book.get("goodreads_id"))
+        action = "update" if page_id else "create"
+        actions.append(
+            {
+                "action": action,
+                "goodreads_id": str(book.get("goodreads_id") or ""),
+                "title": str(book.get("title") or ""),
+            }
+        )
+        if dry_run:
+            if page_id:
+                updated += 1
+            else:
+                created += 1
+            continue
         if page_id:
             response = _request(
                 api_key,
@@ -62,7 +89,7 @@ def export_to_notion(conn, *, api_key: str | None = None, database_id: str | Non
             errors += 0 if response.status_code == 200 else 1
         time.sleep(RATE_LIMIT_DELAY)
 
-    return {"created": created, "updated": updated, "errors": errors}
+    return {"created": created, "updated": updated, "errors": errors, "actions": actions}
 
 
 def _headers(api_key: str) -> dict[str, str]:
@@ -78,7 +105,10 @@ def _request(api_key: str, method: str, url: str, **kwargs):
 
     for _ in range(7):
         kwargs.setdefault("timeout", 60)
-        response = requests.request(method, url, headers=_headers(api_key), **kwargs)
+        try:
+            response = requests.request(method, url, headers=_headers(api_key), **kwargs)
+        except Exception as exc:
+            raise NotionConfigError(f"Could not reach the Notion API: {str(exc)[:500]}") from exc
         if response.status_code != 429:
             return response
         time.sleep(int(response.headers.get("Retry-After", 5)))
@@ -92,7 +122,10 @@ def _load_existing_pages(api_key: str, database_id: str) -> dict[str, str]:
 
     while True:
         response = _request(api_key, "post", url, json=payload)
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except Exception as exc:
+            raise NotionConfigError(f"Notion database lookup failed: {_response_error(response)}") from exc
         data = response.json()
         for page in data.get("results", []):
             rich = page.get("properties", {}).get("Goodreads ID", {}).get("rich_text", [])
@@ -104,6 +137,14 @@ def _load_existing_pages(api_key: str, database_id: str) -> dict[str, str]:
             return existing
         payload["start_cursor"] = data["next_cursor"]
         time.sleep(RATE_LIMIT_DELAY)
+
+
+def _response_error(response) -> str:
+    status = getattr(response, "status_code", "unknown status")
+    body = str(getattr(response, "text", "") or "").strip()
+    if body:
+        return f"{status}: {body[:500]}"
+    return str(status)
 
 
 def _build_properties(book: dict[str, Any]) -> dict[str, Any]:
