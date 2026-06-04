@@ -8,6 +8,7 @@ from pathlib import Path
 from . import conflicts as conflicts_service
 from . import db
 from .catalogue import BookFilters, get_book, list_books, search_books
+from .covers import CoversError, fetch_covers, set_manual_cover
 from .doctor import doctor_report
 from .exports import export_csv, export_json
 from .notion import NotionConfigError, export_to_notion
@@ -68,6 +69,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "import" and args.source == "goodreads":
             summary = import_goodreads_csv(conn, args.csv, mode="import")
             print(latest_sync_summary_markdown(conn))
+            if not args.no_covers:
+                _auto_fetch_covers(conn, args.db)
             return 0
 
         if args.command == "sync" and args.source == "goodreads":
@@ -77,6 +80,29 @@ def main(argv: list[str] | None = None) -> int:
                 output = Path("reports") / f"conflicts-import-{summary.import_run_id}.md"
                 write_latest_conflicts(conn, output)
                 print(f"Conflict report: {output}")
+            if not args.no_covers:
+                _auto_fetch_covers(conn, args.db)
+            return 0
+
+        if args.command == "fetch-covers":
+            result = fetch_covers(
+                conn,
+                _data_dir(args.db),
+                limit=args.limit,
+                refresh=args.refresh,
+                dry_run=args.dry_run,
+            )
+            print(_format_cover_result(result, dry_run=args.dry_run))
+            return 0
+
+        if args.command == "set-cover":
+            try:
+                outcome = set_manual_cover(
+                    conn, _data_dir(args.db), args.goodreads_id, url=args.url, file=args.file
+                )
+            except CoversError as exc:
+                parser.error(str(exc))
+            print(f"Set manual cover for {outcome['title']} → {outcome['cover_path']}")
             return 0
 
         if args.command == "edit":
@@ -214,11 +240,32 @@ def _build_parser() -> argparse.ArgumentParser:
     import_sub = import_parser.add_subparsers(dest="source", required=True)
     goodreads_import = import_sub.add_parser("goodreads", help="Import a Goodreads CSV export")
     goodreads_import.add_argument("csv", help="Path to Goodreads CSV export")
+    goodreads_import.add_argument(
+        "--no-covers", action="store_true", help="Skip the automatic cover-art fetch after import"
+    )
 
     sync_parser = subparsers.add_parser("sync", help="Sync source data into the local catalogue")
     sync_sub = sync_parser.add_subparsers(dest="source", required=True)
     goodreads_sync = sync_sub.add_parser("goodreads", help="Sync a Goodreads CSV export")
     goodreads_sync.add_argument("csv", help="Path to Goodreads CSV export")
+    goodreads_sync.add_argument(
+        "--no-covers", action="store_true", help="Skip the automatic cover-art fetch after sync"
+    )
+
+    covers_parser = subparsers.add_parser("fetch-covers", help="Download missing cover art")
+    covers_parser.add_argument("--limit", type=int, help="Maximum number of books to fetch covers for")
+    covers_parser.add_argument(
+        "--refresh", action="store_true", help="Re-fetch even books already tried (skips manual covers)"
+    )
+    covers_parser.add_argument(
+        "--dry-run", action="store_true", help="Report what would be fetched without writing files"
+    )
+
+    set_cover_parser = subparsers.add_parser("set-cover", help="Set a cover from a URL or local file")
+    set_cover_parser.add_argument("goodreads_id", help="Goodreads Book ID")
+    set_cover_group = set_cover_parser.add_mutually_exclusive_group(required=True)
+    set_cover_group.add_argument("--url", help="Image URL to download")
+    set_cover_group.add_argument("--file", help="Path to a local image file")
 
     edit_parser = subparsers.add_parser("edit", help="Edit local physical-library fields")
     edit_parser.add_argument("goodreads_id", help="Goodreads Book ID")
@@ -260,6 +307,51 @@ def _build_parser() -> argparse.ArgumentParser:
     notion_export.add_argument("--limit", type=int, help="Maximum number of books to export")
 
     return parser
+
+
+def _data_dir(db_path: str) -> Path:
+    """Cover files live beside the SQLite database so the library stays portable."""
+    return Path(db_path).resolve().parent
+
+
+def _auto_fetch_covers(conn, db_path: str) -> None:
+    """Best-effort cover fetch after an import; network errors must not fail import."""
+    try:
+        result = fetch_covers(conn, _data_dir(db_path))
+    except CoversError as exc:
+        print(f"\nSkipped cover fetch: {exc}")
+        return
+    if result["fetched"] or result["not_found"] or result["errors"]:
+        print(
+            f"\nCovers: {result['fetched']} fetched, "
+            f"{result['not_found']} not found, {result['errors']} errors."
+        )
+
+
+def _format_cover_result(result: dict[str, object], *, dry_run: bool) -> str:
+    heading = "Cover dry-run complete" if dry_run else "Cover fetch complete"
+    lines = [
+        f"{heading}: "
+        f"{result['fetched']} fetched, {result['not_found']} not found, "
+        f"{result['errors']} errors, {result['skipped']} skipped"
+    ]
+    if dry_run:
+        actions = result.get("actions", [])
+        if actions:
+            lines.append("")
+            for action in actions:  # type: ignore[union-attr]
+                if not isinstance(action, dict):
+                    continue
+                title = action.get("title") or "Untitled"
+                outcome = action.get("result")
+                if outcome == "fetched":
+                    detail = f"would fetch from {action.get('source')}"
+                elif outcome == "not_found":
+                    detail = "no cover found"
+                else:
+                    detail = "error"
+                lines.append(f"- {title} (Goodreads ID {action.get('goodreads_id')}): {detail}")
+    return "\n".join(lines)
 
 
 def _local_updates_from_args(args) -> dict[str, object]:
