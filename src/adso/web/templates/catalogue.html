@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Adso · Catalogue{% endblock %}
+{% block content %}
+<form method="get" action="/" class="mb-6 flex flex-wrap items-center gap-2">
+  <input
+    type="search"
+    name="q"
+    value="{{ q }}"
+    placeholder="Search title, author, ISBN, notes…"
+    autofocus
+    class="input min-w-[16rem] flex-1">
+  <input type="text" name="status" value="{{ status }}" placeholder="Status" class="input w-32">
+  <input type="text" name="author" value="{{ author }}" placeholder="Author" class="input w-36">
+  <input type="text" name="location" value="{{ location }}" placeholder="Location" class="input w-36">
+  <button type="submit" class="btn">Search</button>
+  {% if q or status or author or location %}
+  <a href="/" class="btn-outline">Clear</a>
+  {% endif %}
+</form>
+
+<p class="mb-3 text-sm text-muted-foreground">{{ count }} book{{ "" if count == 1 else "s" }}</p>
+
+{% if books %}
+<div class="overflow-hidden rounded-lg border">
+  <table class="table">
+    <thead class="bg-muted/50">
+      <tr>
+        <th>Title</th>
+        <th>Author</th>
+        <th>Status</th>
+        <th>Owned</th>
+        <th>Location</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for book in books %}
+      <tr>
+        <td class="font-medium whitespace-normal">
+          {% if book.goodreads_id %}
+          <a href="/book/{{ book.goodreads_id }}" class="hover:underline">{{ book.title }}</a>
+          {% else %}
+          {{ book.title }}
+          {% endif %}
+        </td>
+        <td class="text-muted-foreground">{{ book.author or "" }}</td>
+        <td>
+          {% if book.reading_status %}
+          <span class="badge-secondary">{{ book.reading_status }}</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if book.owned %}
+          <span class="badge">yes</span>
+          {% else %}
+          <span class="badge-outline">no</span>
+          {% endif %}
+        </td>
+        <td class="text-muted-foreground">{{ book.location or "" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="card">
+  <section class="py-6 text-muted-foreground">
+    No books found. Import a Goodreads export with
+    <code class="rounded bg-muted px-1 py-0.5 text-sm">adso import goodreads</code>.
+  </section>
+</div>
+{% endif %}
+{% endblock %}

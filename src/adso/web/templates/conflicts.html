@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Adso · Conflicts{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-semibold tracking-tight">Conflicts</h1>
+<p class="mb-6 text-muted-foreground">
+  {% if total %}
+  {{ total }} pending field conflict{{ "" if total == 1 else "s" }} across
+  {{ groups|length }} book{{ "" if groups|length == 1 else "s" }}.
+  Your local values are preserved until you decide.
+  {% else %}
+  No pending conflicts.
+  {% endif %}
+</p>
+
+<div id="conflict-list" class="flex flex-col gap-6">
+  {% for group in groups %}
+    {% include "_conflict_group.html" %}
+  {% endfor %}
+</div>
+
+{% if not groups %}
+<div class="card">
+  <section class="py-10 text-center text-muted-foreground">
+    Your catalogue is reconciled — nothing to review.
+  </section>
+</div>
+{% endif %}
+{% endblock %}

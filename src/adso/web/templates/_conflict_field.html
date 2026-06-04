@@ -1,0 +1,52 @@
+{# One field's conflict: two explicit choices, each button under its own value. #}
+<div id="conflict-field-{{ c.id }}" class="rounded-lg border p-3" x-data="{ editing: false }">
+  <div class="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+    <span class="text-sm font-medium">{{ c.field_label }}</span>
+    <span class="text-xs text-muted-foreground">Last synced from Goodreads: {{ c.base or "—" }}</span>
+  </div>
+
+  <div class="grid gap-2 sm:grid-cols-2">
+    {# Choice A: keep the local value #}
+    <div class="flex flex-col gap-2 rounded-md border bg-muted/40 p-3">
+      <div class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Your local value</div>
+      <div class="flex-1 whitespace-pre-line font-medium">{{ c.local or "—" }}</div>
+      <button
+        class="btn-sm-outline w-full"
+        hx-post="/conflicts/{{ c.id }}/resolve"
+        hx-vals='{"choice": "local"}'
+        hx-target="#conflict-field-{{ c.id }}"
+        hx-swap="outerHTML">
+        Keep your local value
+      </button>
+    </div>
+
+    {# Choice B: take the incoming Goodreads value #}
+    <div class="flex flex-col gap-2 rounded-md border p-3">
+      <div class="text-xs font-medium uppercase tracking-wide text-muted-foreground">New from Goodreads</div>
+      <div class="flex-1 whitespace-pre-line font-medium">{{ c.incoming or "—" }}</div>
+      <button
+        class="btn-sm w-full"
+        hx-post="/conflicts/{{ c.id }}/resolve"
+        hx-vals='{"choice": "incoming"}'
+        hx-target="#conflict-field-{{ c.id }}"
+        hx-swap="outerHTML">
+        Use this Goodreads value
+      </button>
+    </div>
+  </div>
+
+  <div class="mt-2">
+    <button class="btn-sm-ghost" type="button" @click="editing = !editing">Enter a custom value…</button>
+    <form
+      x-show="editing"
+      x-cloak
+      class="mt-2 flex gap-2"
+      hx-post="/conflicts/{{ c.id }}/resolve"
+      hx-target="#conflict-field-{{ c.id }}"
+      hx-swap="outerHTML">
+      <input type="hidden" name="choice" value="custom">
+      <input type="text" name="value" class="input flex-1" placeholder="Custom value…" value="{{ c.local }}">
+      <button class="btn-sm" type="submit">Save custom</button>
+    </form>
+  </div>
+</div>

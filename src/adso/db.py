@@ -135,13 +135,25 @@ def initialize(conn: sqlite3.Connection) -> None:
             local_value TEXT,
             incoming_value TEXT,
             status TEXT NOT NULL DEFAULT 'pending',
+            resolution TEXT,
+            resolved_at TEXT,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(import_run_id) REFERENCES import_runs(id) ON DELETE CASCADE,
             FOREIGN KEY(book_id) REFERENCES books(id) ON DELETE CASCADE
         );
         """
     )
+    _migrate_sync_conflicts(conn)
     conn.commit()
+
+
+def _migrate_sync_conflicts(conn: sqlite3.Connection) -> None:
+    """Add resolution columns to sync_conflicts tables created before v2."""
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(sync_conflicts)")}
+    if "resolution" not in existing:
+        conn.execute("ALTER TABLE sync_conflicts ADD COLUMN resolution TEXT")
+    if "resolved_at" not in existing:
+        conn.execute("ALTER TABLE sync_conflicts ADD COLUMN resolved_at TEXT")
 
 
 def create_import_run(
@@ -179,6 +191,13 @@ def update_import_run_counts(
         """,
         (created, updated, unchanged, conflicts, import_run_id),
     )
+
+
+def list_import_runs(conn: sqlite3.Connection, *, limit: int | None = None) -> list[sqlite3.Row]:
+    limit_sql = f"LIMIT {int(limit)}" if limit else ""
+    return conn.execute(
+        f"SELECT * FROM import_runs ORDER BY id DESC {limit_sql}"
+    ).fetchall()
 
 
 def get_book_by_goodreads_id(conn: sqlite3.Connection, goodreads_id: str) -> sqlite3.Row | None:
@@ -366,3 +385,63 @@ def add_conflict(
             serialize_value(incoming_value),
         ),
     )
+
+
+def get_conflict(conn: sqlite3.Connection, conflict_id: int) -> sqlite3.Row | None:
+    return conn.execute(
+        """
+        SELECT c.*, b.title, b.author, b.goodreads_id
+        FROM sync_conflicts c
+        JOIN books b ON b.id = c.book_id
+        WHERE c.id = ?
+        """,
+        (conflict_id,),
+    ).fetchone()
+
+
+def list_conflicts(
+    conn: sqlite3.Connection,
+    *,
+    status: str | None = "pending",
+    book_id: int | None = None,
+) -> list[sqlite3.Row]:
+    clauses: list[str] = []
+    params: list[Any] = []
+    if status is not None:
+        clauses.append("c.status = ?")
+        params.append(status)
+    if book_id is not None:
+        clauses.append("c.book_id = ?")
+        params.append(book_id)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    return conn.execute(
+        f"""
+        SELECT c.*, b.title, b.author, b.goodreads_id
+        FROM sync_conflicts c
+        JOIN books b ON b.id = c.book_id
+        {where}
+        ORDER BY b.title COLLATE NOCASE, c.field_name
+        """,
+        params,
+    ).fetchall()
+
+
+def set_conflict_resolution(
+    conn: sqlite3.Connection,
+    conflict_id: int,
+    *,
+    resolution: str,
+) -> None:
+    conn.execute(
+        """
+        UPDATE sync_conflicts
+        SET status = 'resolved', resolution = ?, resolved_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (resolution, conflict_id),
+    )
+
+
+def pending_conflict_count(conn: sqlite3.Connection) -> int:
+    row = conn.execute("SELECT COUNT(*) FROM sync_conflicts WHERE status = 'pending'").fetchone()
+    return int(row[0])

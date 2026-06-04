@@ -53,6 +53,7 @@ The core principle is: **the user's personal catalogue is always the source of t
   - If the local catalogue changed that field independently, create a conflict instead of overwriting.
 - Always preserve the full source history so future connectors can compare against prior imports.
 - Generate human-readable conflict reports in v1; interactive conflict resolution can come later.
+- Treat volatile Goodreads-side fields as **informational**: community average rating, publisher, ISBNs, page count, edition year, additional authors, and title case/whitespace/edition-tag differences are refreshed for display but never counted as a change or conflict, so cosmetic export drift doesn't churn syncs. Title text/subtitle and author changes remain tracked as possible data issues. (Implemented 2026-06-04; see `INFORMATIONAL_FIELDS` / `_comparison_key` in `sync.py`.)
 
 ## CLI And App Compatibility
 
@@ -84,6 +85,7 @@ The foundation milestones (1–6) are effectively complete. Remaining work is se
 
 - **v1 — Hardened CLI (technical preview).** Near done; gated by the Release Hardening milestone. "Publish a great tool."
 - **v2 — Local Web UI.** Adso's own interface over the canonical SQLite core: visual conflict resolution (the crown jewel, since conflicts are inherently visual), an activity view, and catalogue browse/search/edit, plus exports and a single public demo instance seeded with synthetic data. Interactive conflict resolution is built here, not as a separate CLI phase.
+  - **Status (2026-06-04):** Shipped a FastAPI + Jinja/HTMX/Alpine + Tailwind/Basecoat web UI (`adso serve`, `src/adso/web/`) reusing the existing services in-process. Done: app/API boundary, catalogue browse/search/detail, **visual conflict resolution** (three-way per-field with keep-local / accept-Goodreads / custom + per-book bulk, `adso conflicts`/`adso resolve` for parity, resolution decisions + audit columns on `sync_conflicts`), **activity view** over `import_runs`, and **web Goodreads import** (upload → run → summary). Remaining: CSV/JSON export downloads, inline catalogue editing, and the public demo instance.
 - **v3 — Optional hosted multi-tenant.** A deliberate go/no-go *after* v2, anchored on "your local copy is always downloadable." This is "start a product," a different commitment — do not build v3 plumbing speculatively.
 
 ## Linear Project Plan

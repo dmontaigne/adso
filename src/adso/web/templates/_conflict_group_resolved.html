@@ -1,0 +1,8 @@
+{# Returned after a book's conflicts are bulk-resolved; replaces the group card. #}
+<div id="conflict-group-{{ book_id }}" class="card">
+  <section class="py-4 text-sm text-muted-foreground">
+    <span class="font-medium text-foreground">{{ title }}</span>
+    — {{ count }} conflict{{ "" if count == 1 else "s" }} {{ resolution_label }}.
+  </section>
+</div>
+<span id="nav-conflict-badge" hx-swap-oob="true">{% if pending_count %}<span class="badge-destructive">{{ pending_count }}</span>{% endif %}</span>

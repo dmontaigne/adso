@@ -1,0 +1,19 @@
+/*
+ * Tailwind + Basecoat entry point for the Adso web UI.
+ *
+ * This is a RELEASE-TIME build input, not a runtime asset. Running
+ * `npm run build:css` compiles this into ../static/app.css (committed and
+ * shipped inside the pip package). End users never run Node.
+ */
+@import "tailwindcss";
+
+/* Scan the Jinja templates so the Tailwind utilities used there are emitted. */
+@source "../templates";
+
+/* shadcn-style components + design tokens (light + .dark). */
+@import "basecoat-css";
+
+/* Hide Alpine-toggled elements until Alpine initializes. */
+[x-cloak] {
+  display: none !important;
+}

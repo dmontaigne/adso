@@ -1,0 +1,38 @@
+{# A book and its pending field conflicts. Swapped wholesale on bulk resolve. #}
+<div id="conflict-group-{{ group.book_id }}" class="card">
+  <header class="flex flex-wrap items-start justify-between gap-3 border-b pb-4">
+    <div>
+      <h2>
+        {% if group.goodreads_id %}
+        <a href="/book/{{ group.goodreads_id }}" class="hover:underline">{{ group.title }}</a>
+        {% else %}
+        {{ group.title }}
+        {% endif %}
+      </h2>
+      <p>{{ group.author or "Unknown author" }} · {{ group.conflicts|length }} field{{ "" if group.conflicts|length == 1 else "s" }}</p>
+    </div>
+    <div class="flex shrink-0 gap-2">
+      <button
+        class="btn-sm-outline"
+        hx-post="/conflicts/book/{{ group.book_id }}/resolve"
+        hx-vals='{"choice": "local"}'
+        hx-target="#conflict-group-{{ group.book_id }}"
+        hx-swap="outerHTML">
+        Keep all local values
+      </button>
+      <button
+        class="btn-sm"
+        hx-post="/conflicts/book/{{ group.book_id }}/resolve"
+        hx-vals='{"choice": "incoming"}'
+        hx-target="#conflict-group-{{ group.book_id }}"
+        hx-swap="outerHTML">
+        Use all Goodreads values
+      </button>
+    </div>
+  </header>
+  <section class="flex flex-col gap-3">
+    {% for c in group.conflicts %}
+      {% include "_conflict_field.html" %}
+    {% endfor %}
+  </section>
+</div>
