@@ -280,12 +280,61 @@ class AdsoCoreTests(unittest.TestCase):
 
         self.assertEqual(summary.conflicts, 1)
         self.assertEqual(book["reading_status"], "Local Status")
+        # exclusive_shelf is derived from the same Goodreads column as
+        # reading_status, so it must be held alongside the conflict rather than
+        # silently advancing to "read" (DAV-143).
+        self.assertEqual(book["exclusive_shelf"], "to-read")
         self.assertIn("The Name of the Rose", report)
         self.assertIn("reading_status", report)
         self.assertIn("current reading state", report)
         sync_report = latest_sync_summary_markdown(self.conn)
         self.assertIn("Local catalogue values were preserved", sync_report)
         self.assertIn("adso report conflicts", sync_report)
+
+    def test_coupled_shelf_fields_are_held_together_on_conflict(self) -> None:
+        # reading_status and exclusive_shelf both derive from Goodreads'
+        # "Exclusive Shelf" column. When reading_status has diverged locally and
+        # Goodreads moves the shelf, neither field may be auto-updated, or the
+        # two would drift apart (DAV-143).
+        csv_path = self.root / "goodreads.csv"
+        write_goodreads_csv(csv_path, [row()])
+        import_goodreads_csv(self.conn, csv_path, mode="import")
+        self.conn.execute(
+            "UPDATE books SET reading_status = ? WHERE goodreads_id = ?", ("Local Status", "1")
+        )
+        self.conn.commit()
+
+        changed_path = self.root / "goodreads-changed.csv"
+        write_goodreads_csv(changed_path, [row(**{"Exclusive Shelf": "read", "Bookshelves": "read"})])
+        summary = import_goodreads_csv(self.conn, changed_path, mode="sync")
+        book = self.conn.execute("SELECT * FROM books WHERE goodreads_id = '1'").fetchone()
+
+        # Only the genuinely diverged field is recorded as a conflict; the
+        # coupled field is held (preserved), not flagged.
+        self.assertEqual(summary.conflicts, 1)
+        self.assertEqual(book["reading_status"], "Local Status")
+        self.assertEqual(book["exclusive_shelf"], "to-read")
+        conflict_fields = [
+            r["field_name"]
+            for r in self.conn.execute("SELECT field_name FROM sync_conflicts")
+        ]
+        self.assertEqual(conflict_fields, ["reading_status"])
+
+    def test_coupled_shelf_fields_update_together_when_safe(self) -> None:
+        # With no local divergence, a shelf change advances both coupled fields.
+        csv_path = self.root / "goodreads.csv"
+        write_goodreads_csv(csv_path, [row()])
+        import_goodreads_csv(self.conn, csv_path, mode="import")
+
+        changed_path = self.root / "goodreads-changed.csv"
+        write_goodreads_csv(changed_path, [row(**{"Exclusive Shelf": "read", "Bookshelves": "read"})])
+        summary = import_goodreads_csv(self.conn, changed_path, mode="sync")
+        book = self.conn.execute("SELECT * FROM books WHERE goodreads_id = '1'").fetchone()
+
+        self.assertEqual(summary.conflicts, 0)
+        self.assertEqual(summary.updated, 1)
+        self.assertEqual(book["reading_status"], "Read")
+        self.assertEqual(book["exclusive_shelf"], "read")
 
     def test_portable_exports(self) -> None:
         csv_path = self.root / "goodreads.csv"
