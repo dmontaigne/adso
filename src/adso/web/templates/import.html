@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Adso · Import{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-semibold tracking-tight">Import a Goodreads export</h1>
+<p class="mb-6 text-muted-foreground">
+  In Goodreads: <span class="text-foreground">My Books → Import and export → Export Library</span>, then upload the CSV here.
+  Your local catalogue fields are protected — anything Goodreads changed that you also changed locally becomes a
+  conflict to review rather than an overwrite.
+</p>
+
+{% if summary %}
+<div class="card mb-6">
+  <header><h2>Imported {{ filename }}</h2></header>
+  <section>
+    <p class="mb-3 text-sm text-muted-foreground">{{ summary.row_count }} row{{ "" if summary.row_count == 1 else "s" }} processed ({{ summary.mode }}).</p>
+    <div class="flex flex-wrap gap-2">
+      <span class="badge-secondary">{{ summary.created }} new</span>
+      <span class="badge-secondary">{{ summary.updated }} updated</span>
+      <span class="badge-outline">{{ summary.unchanged }} unchanged</span>
+      {% if summary.skipped %}<span class="badge-outline">{{ summary.skipped }} skipped</span>{% endif %}
+      {% if summary.conflicts %}<span class="badge-destructive">{{ summary.conflicts }} conflicts</span>{% endif %}
+    </div>
+    <div class="mt-4 flex flex-wrap gap-3 text-sm">
+      <a href="/" class="hover:underline">View catalogue →</a>
+      <a href="/activity" class="hover:underline">View activity →</a>
+      {% if summary.conflicts %}<a href="/conflicts" class="font-medium hover:underline">Review {{ summary.conflicts }} conflict{{ "" if summary.conflicts == 1 else "s" }} →</a>{% endif %}
+    </div>
+    {% if summary.created == 0 and summary.updated == 0 and summary.conflicts == 0 and summary.skipped == summary.row_count and summary.row_count > 0 %}
+    <p class="mt-4 text-sm text-muted-foreground">No catalogue rows were recognised. Is this a Goodreads library export?</p>
+    {% endif %}
+  </section>
+</div>
+{% elif error %}
+<div class="alert-destructive mb-6">{{ error }}</div>
+{% endif %}
+
+<form method="post" action="/import" enctype="multipart/form-data" class="card">
+  <section class="flex flex-col gap-3 sm:flex-row sm:items-center">
+    <input type="file" name="file" accept=".csv" required
+           class="input flex-1 file:mr-3 file:rounded-md file:border-0 file:bg-secondary file:px-3 file:py-1 file:text-sm file:font-medium">
+    <button class="btn" type="submit">Import export</button>
+  </section>
+</form>
+{% endblock %}

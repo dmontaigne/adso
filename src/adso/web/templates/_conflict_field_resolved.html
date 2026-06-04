@@ -1,0 +1,6 @@
+{# Returned after a single field is resolved; replaces the field row. #}
+<div id="conflict-field-{{ id }}" class="rounded-lg border border-dashed bg-muted/30 p-3 text-sm text-muted-foreground">
+  <span class="font-medium text-foreground">{{ field_label }}</span>
+  — {{ resolution_label }}{% if value %}: <span class="font-medium text-foreground">{{ value }}</span>{% endif %}
+</div>
+<span id="nav-conflict-badge" hx-swap-oob="true">{% if pending_count %}<span class="badge-destructive">{{ pending_count }}</span>{% endif %}</span>

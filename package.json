@@ -1,0 +1,31 @@
+{
+  "name": "book-importer",
+  "version": "1.0.0",
+  "description": "Adso is a local-first Goodreads backup and personal library catalogue. It treats Goodreads, Notion, and future services as sync surfaces or inbound feeds, while your own local catalogue remains the source of truth.",
+  "main": "index.js",
+  "directories": {
+    "example": "examples",
+    "test": "tests"
+  },
+  "scripts": {
+    "build:css": "tailwindcss -i src/adso/web/styles/input.css -o src/adso/web/static/app.css --minify",
+    "watch:css": "tailwindcss -i src/adso/web/styles/input.css -o src/adso/web/static/app.css --watch"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dmontaigne/adso.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/dmontaigne/adso/issues"
+  },
+  "homepage": "https://github.com/dmontaigne/adso#readme",
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.3.0",
+    "basecoat-css": "^0.3.11",
+    "tailwindcss": "^4.3.0"
+  }
+}

@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Adso · Activity{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-semibold tracking-tight">Activity</h1>
+<p class="mb-6 text-muted-foreground">
+  Every import and sync against your catalogue, newest first.
+</p>
+
+{% if runs %}
+<div class="overflow-x-auto rounded-lg border">
+  <table class="table">
+    <thead class="bg-muted/50">
+      <tr>
+        <th>When</th>
+        <th>Mode</th>
+        <th>Source</th>
+        <th class="text-right">Rows</th>
+        <th class="text-right">New</th>
+        <th class="text-right">Updated</th>
+        <th class="text-right">Unchanged</th>
+        <th class="text-right">Conflicts</th>
+      </tr>
+    </thead>
+    <tbody class="tabular-nums">
+      {% for run in runs %}
+      <tr>
+        <td class="whitespace-nowrap">{{ run.imported_at }}</td>
+        <td>
+          {% if run.mode == "sync" %}
+          <span class="badge-secondary">sync</span>
+          {% else %}
+          <span class="badge-outline">import</span>
+          {% endif %}
+        </td>
+        <td class="whitespace-nowrap">
+          {{ run.source }}
+          {% if run.source_file %}<span class="text-muted-foreground">· {{ run.source_file }}</span>{% endif %}
+        </td>
+        <td class="text-right">{{ run.row_count }}</td>
+        <td class="text-right">{{ run.created }}</td>
+        <td class="text-right">{{ run.updated }}</td>
+        <td class="text-right text-muted-foreground">{{ run.unchanged }}</td>
+        <td class="text-right">
+          {% if run.conflicts %}
+          <a href="/conflicts" class="hover:underline"><span class="badge-destructive">{{ run.conflicts }}</span></a>
+          {% else %}
+          <span class="text-muted-foreground">0</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="card">
+  <section class="py-10 text-center text-muted-foreground">
+    No imports yet. Bring in your library with
+    <code class="rounded bg-muted px-1 py-0.5 text-sm">adso import goodreads &lt;export.csv&gt;</code>.
+  </section>
+</div>
+{% endif %}
+{% endblock %}

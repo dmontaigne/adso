@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Adso · {{ book.title }}{% endblock %}
+{% block content %}
+<a href="/" class="text-sm text-muted-foreground hover:text-foreground">← Catalogue</a>
+<h1 class="mt-2 text-2xl font-semibold tracking-tight">{{ book.title }}</h1>
+<p class="mb-6 text-muted-foreground">
+  {{ book.author or "Unknown author" }}{% if book.additional_authors %}, {{ book.additional_authors }}{% endif %}
+</p>
+
+<div class="grid gap-6 md:grid-cols-2">
+  <div class="card">
+    <header><h2>Goodreads</h2></header>
+    <section>
+      <dl class="grid grid-cols-[8rem_1fr] gap-y-2 text-sm">
+        <dt class="text-muted-foreground">Goodreads ID</dt><dd>{{ book.goodreads_id or "—" }}</dd>
+        <dt class="text-muted-foreground">ISBN-13</dt><dd>{{ book.isbn13 or "—" }}</dd>
+        <dt class="text-muted-foreground">ISBN-10</dt><dd>{{ book.isbn10 or "—" }}</dd>
+        <dt class="text-muted-foreground">Reading status</dt><dd>{{ book.reading_status or "—" }}</dd>
+        <dt class="text-muted-foreground">Shelf</dt><dd>{{ book.exclusive_shelf or "—" }}</dd>
+        <dt class="text-muted-foreground">Shelves</dt><dd>{{ book.shelves | join(", ") if book.shelves else "—" }}</dd>
+        <dt class="text-muted-foreground">My rating</dt><dd>{{ book.rating if book.rating is not none else "—" }}</dd>
+        <dt class="text-muted-foreground">Average</dt><dd>{{ book.average_rating or "—" }}</dd>
+        <dt class="text-muted-foreground">Date read</dt><dd>{{ book.date_read or "—" }}</dd>
+        <dt class="text-muted-foreground">Date added</dt><dd>{{ book.date_added or "—" }}</dd>
+        <dt class="text-muted-foreground">Review</dt><dd class="whitespace-pre-line">{{ book.my_review or "—" }}</dd>
+      </dl>
+    </section>
+  </div>
+
+  <div class="card">
+    <header><h2>Local catalogue</h2></header>
+    <section>
+      <dl class="grid grid-cols-[8rem_1fr] gap-y-2 text-sm">
+        <dt class="text-muted-foreground">Owned</dt>
+        <dd>
+          {% if book.owned %}<span class="badge">yes</span>{% else %}<span class="badge-outline">no</span>{% endif %}
+        </dd>
+        <dt class="text-muted-foreground">Copy count</dt><dd>{{ book.copy_count }}</dd>
+        <dt class="text-muted-foreground">Location</dt><dd>{{ book.location or "—" }}</dd>
+        <dt class="text-muted-foreground">Shelf / box</dt><dd>{{ book.shelf_box or "—" }}</dd>
+        <dt class="text-muted-foreground">Loaned to</dt><dd>{{ book.loaned_to or "—" }}</dd>
+        <dt class="text-muted-foreground">Local notes</dt><dd class="whitespace-pre-line">{{ book.local_notes or "—" }}</dd>
+      </dl>
+    </section>
+  </div>
+</div>
+{% endblock %}

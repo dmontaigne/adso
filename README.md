@@ -38,6 +38,7 @@ For a fuller public-safe walkthrough, see [examples/demo.md](examples/demo.md).
 - Local physical-library fields are protected during sync.
 - Goodreads activity fields can update safely when the local value has not changed since the previous source snapshot.
 - Conflicts are reported instead of silently overwriting local data.
+- Cosmetic Goodreads drift is treated as informational — community average rating, publisher/edition relabels, ISBNs, page counts, edition year, additional authors, and title case/whitespace/edition-tag differences are refreshed for display but never count as a change or conflict. Title text/subtitle and author changes stay tracked, so genuine data issues still surface.
 - Notion is optional and reads from SQLite.
 
 ## Current Commands
@@ -51,6 +52,8 @@ adso list --owned true --location Office
 adso search "winter society" --owned true --limit 10
 adso show GOODREADS_ID
 adso edit GOODREADS_ID --owned true --copy-count 1 --location Office --shelf-box A1
+adso conflicts
+adso resolve CONFLICT_ID --accept-incoming
 adso report conflicts --output reports/conflicts.md
 adso report summary --output reports/summary.md
 adso export csv --output exports/catalogue.csv
@@ -60,6 +63,39 @@ adso export notion --limit 1
 ```
 
 `adso import goodreads` and `adso sync goodreads` both preserve raw import rows. `sync` additionally writes a conflict report when a Goodreads update would overwrite a local change.
+
+## Web UI (v2, preview)
+
+Adso ships a local web interface over the same canonical SQLite catalogue. Install the web extra and start the server:
+
+```bash
+pip install -e ".[web]"
+adso serve            # opens http://127.0.0.1:8000
+```
+
+Options: `adso serve --host 0.0.0.0 --port 8080 --no-browser`. The `--db` flag applies as usual (`adso --db path/to/adso.sqlite serve`). The web layer reuses the same query and conflict services as the CLI, so it reads and writes exactly the same database. A JSON API lives at `/api/books` and `/api/conflicts` with interactive docs at `/api/docs`.
+
+The web UI's centrepiece is **visual conflict resolution** at `/conflicts`: each conflicting field is shown with your preserved local value and the incoming Goodreads value side by side (plus the previously-synced value for context). Resolve each field by keeping the local value, using the Goodreads value, or entering a custom value — individually or per book. The same operations are available from the terminal with `adso conflicts` and `adso resolve`.
+
+To try conflict resolution on throwaway data, seed a demo database with sample conflicts:
+
+```bash
+python examples/seed_conflicts.py        # writes /tmp/adso-demo.sqlite
+adso --db /tmp/adso-demo.sqlite serve
+```
+
+You can also **import a Goodreads export** straight from the browser at `/import` — upload the CSV and Adso runs it through the same engine as `adso import`/`sync`, showing a summary (new / updated / unchanged / conflicts) with links to review. Imports run against the database the server was started with, and your local fields are protected exactly as on the CLI.
+
+The **activity view** at `/activity` lists every import and sync against your catalogue, newest first, with the row count and the created / updated / unchanged / conflict breakdown for each run.
+
+### Rebuilding styles (contributors only)
+
+The stylesheet at `src/adso/web/static/app.css` is prebuilt and committed, so **running** the app never needs Node.js. To change the styling, rebuild it with Tailwind + Basecoat:
+
+```bash
+npm install
+npm run build:css     # one-off build; or `npm run watch:css` while iterating
+```
 
 ## Notion
 

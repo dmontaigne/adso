@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from . import conflicts as conflicts_service
 from . import db
 from .catalogue import BookFilters, get_book, list_books, search_books
 from .doctor import doctor_report
@@ -29,6 +30,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "doctor":
         print(doctor_report(args.db))
         return 0
+
+    if args.command == "serve":
+        return _run_server(
+            args.db,
+            host=args.host,
+            port=args.port,
+            open_browser=not args.no_browser,
+        )
 
     conn = db.connect(args.db)
     try:
@@ -76,6 +85,30 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Updated local catalogue fields for Goodreads ID {args.goodreads_id}")
             return 0
 
+        if args.command == "conflicts":
+            groups = conflicts_service.list_open_conflicts(conn)
+            print(_format_conflicts(groups))
+            return 0
+
+        if args.command == "resolve":
+            if args.accept_incoming:
+                choice, custom = "incoming", None
+            elif args.set is not None:
+                choice, custom = "custom", args.set
+            else:
+                choice, custom = "local", None
+            try:
+                outcome = conflicts_service.resolve_conflict(
+                    conn, args.conflict_id, choice=choice, custom_value=custom
+                )
+            except ValueError as exc:
+                parser.error(str(exc))
+            message = f"Resolved conflict {args.conflict_id} ({outcome['field_label']}): {outcome['resolution_label']}"
+            if outcome["value"]:
+                message += f" → {outcome['value']}"
+            print(message)
+            return 0
+
         if args.command == "report" and args.report_type == "conflicts":
             if args.output:
                 path = write_latest_conflicts(conn, args.output)
@@ -116,6 +149,36 @@ def main(argv: list[str] | None = None) -> int:
         conn.close()
 
 
+def _run_server(db_path: str, *, host: str, port: int, open_browser: bool) -> int:
+    try:
+        import uvicorn
+    except ModuleNotFoundError:
+        raise SystemExit(
+            "The web UI needs extra dependencies. Install them with:\n"
+            "    pip install -e '.[web]'"
+        )
+
+    from .web.app import create_app
+
+    # Make sure the catalogue file exists and is initialized before serving.
+    conn = db.connect(db_path)
+    db.initialize(conn)
+    conn.close()
+
+    app = create_app(db_path)
+    url = f"http://{host}:{port}"
+    print(f"Adso web UI running at {url}  (Ctrl+C to stop)")
+
+    if open_browser:
+        import threading
+        import webbrowser
+
+        threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+
+    uvicorn.run(app, host=host, port=port, log_level="info")
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Adso local-first book catalogue")
     parser.add_argument("--db", default=DEFAULT_DB, help=f"SQLite database path (default: {DEFAULT_DB})")
@@ -123,6 +186,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("init", help="Initialize the local catalogue database")
     subparsers.add_parser("doctor", help="Check local Adso setup and suggest next commands")
+
+    serve_parser = subparsers.add_parser("serve", help="Run the local web UI")
+    serve_parser.add_argument("--host", default="127.0.0.1", help="Host to bind (default: 127.0.0.1)")
+    serve_parser.add_argument("--port", type=int, default=8000, help="Port to bind (default: 8000)")
+    serve_parser.add_argument("--no-browser", action="store_true", help="Do not open a browser window")
 
     list_parser = subparsers.add_parser("list", help="List books in the local catalogue")
     list_parser.add_argument("--status", help="Filter by reading status, e.g. 'Read' or 'To Read'")
@@ -160,6 +228,19 @@ def _build_parser() -> argparse.ArgumentParser:
     edit_parser.add_argument("--shelf-box", help="Shelf or box")
     edit_parser.add_argument("--loaned-to", help="Who currently has the book")
     edit_parser.add_argument("--local-notes", help="Local catalogue notes")
+
+    subparsers.add_parser("conflicts", help="List pending sync conflicts with their IDs")
+
+    resolve_parser = subparsers.add_parser("resolve", help="Resolve a sync conflict by ID")
+    resolve_parser.add_argument("conflict_id", type=int, help="Conflict ID (see `adso conflicts`)")
+    resolve_group = resolve_parser.add_mutually_exclusive_group()
+    resolve_group.add_argument(
+        "--keep-local", action="store_true", help="Keep the local value (default)"
+    )
+    resolve_group.add_argument(
+        "--accept-incoming", action="store_true", help="Accept the incoming Goodreads value"
+    )
+    resolve_group.add_argument("--set", dest="set", metavar="VALUE", help="Set a custom value")
 
     report_parser = subparsers.add_parser("report", help="Generate reports")
     report_sub = report_parser.add_subparsers(dest="report_type", required=True)
@@ -237,6 +318,28 @@ def _format_notion_export_result(result: dict[str, object], *, dry_run: bool) ->
         else:
             lines.append("")
             lines.append("No Notion actions planned.")
+    return "\n".join(lines)
+
+
+def _format_conflicts(groups: list[dict[str, object]]) -> str:
+    if not groups:
+        return "No pending conflicts."
+    lines: list[str] = []
+    total = 0
+    for group in groups:
+        if lines:
+            lines.append("")
+        author = group.get("author") or "Unknown author"
+        lines.append(f"{group['title']} — {author} (Goodreads ID {group.get('goodreads_id') or '?'})")
+        for conflict in group["conflicts"]:  # type: ignore[index]
+            total += 1
+            lines.append(
+                f"  [{conflict['id']}] {conflict['field_label']}: "
+                f"local={_display_value(conflict['local'])!r}  "
+                f"incoming={_display_value(conflict['incoming'])!r}"
+            )
+    lines.append("")
+    lines.append(f"{total} pending conflict(s). Resolve with `adso resolve ID [--accept-incoming|--set VALUE]`.")
     return "\n".join(lines)
 
 
