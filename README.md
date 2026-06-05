@@ -12,9 +12,15 @@
 
 > **Goodreads is where your friends are. Adso is where your library lives.**
 
-**Adso is a home for your library** — a sovereign, local-first copy you own, fed from Goodreads, that outlives any single app or service. Stay on Goodreads for the network; keep an easily-synced copy in Adso that is yours and happens to also be a backup.
+**Adso is a digital home for your library** — a sovereign, local-first copy you own, fed from Goodreads, that outlives any single app or service.
 
-Under the hood, Adso treats Goodreads (and future feeds) as sync surfaces, while your own local catalogue stays the source of truth. v1 is CLI-first and SQLite-backed, so the core can later power a web app, desktop app, or agent workflows without rewriting the sync model.
+Stay on Goodreads for the network: that's where your friends, your history, and your reviews are, and it's the one thing it's genuinely good at. But keep a synced copy in Adso that is *yours* — a single [SQLite](https://www.sqlite.org/) file on your own machine, always exportable to CSV/JSON, with no account, no ads, and no company that can sunset it. Goodreads froze its API in 2020; Adso is the copy that keeps moving. You add it and give up nothing — and yes, it's also a backup.
+
+It follows the "file over app" idea (borrowed from [Obsidian](https://stephango.com/file-over-app)): your data should outlive the tool, in a format you control. SQLite is one of the longest-lived formats there is — a [Library of Congress recommended archival format](https://www.loc.gov/preservation/digital/formats/fdd/fdd000461.shtml) — so the catalogue you build today is still readable in decades.
+
+**Fast, because it's local.** Your whole library is one file on disk: search is instant, everything works offline, and it's yours to query, script, or back up however you like — no rate limits, no waiting on someone else's server.
+
+v1 is CLI-first and SQLite-backed. Because every interface is just an adapter over that one canonical catalogue, the same core powers what's next without rewriting the sync model: a **local web UI** (v2 — where visual conflict resolution lives), catalogue **enrichment** and **duplicate cleanup**, **more connectors** beyond Goodreads and Notion, and an **assistant layer** for audits and recommendations.
 
 ## Quick Start
 
