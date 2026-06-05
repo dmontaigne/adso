@@ -6,14 +6,16 @@ records a relative path plus provenance. This is enrichment, not a
 Goodreads-sourced field, so it deliberately stays out of the
 source_snapshots/sync_conflicts machinery.
 
-Source chain (first hit wins), all via Open Library:
-    1. Cover by ISBN-13 then ISBN-10.
-    2. Search API by title + author -> cover id -> cover by id.
+Source chain (first hit wins):
+    1. Open Library cover by ISBN-13 then ISBN-10.
+    2. Open Library Search by title + author -> cover id -> cover by id.
+    3. iTunes / Apple Books Search by title + author -> artwork.
 
-Open Library is used exclusively rather than Google Books: it is the open,
-community source (in keeping with the local-first ethos), needs no API key, and
-is far more lenient about request volume — Google Books rate-limits (HTTP 429)
-well before a 1000-book library is done, and its throttled connections can stall.
+Open Library is the primary source: it is the open, community source (in keeping
+with the local-first ethos), needs no API key, and is lenient about volume.
+iTunes is a no-key fallback that fills gaps Open Library lacks art for. Google
+Books is deliberately not used — its keyless tier rate-limits (HTTP 429) almost
+immediately and its throttled connections can stall.
 
 A manually-set cover (``cover_status == 'manual'``) is never overwritten by an
 automatic fetch.
@@ -35,9 +37,14 @@ RATE_LIMIT_DELAY = 0.75
 # (connect, read) timeouts: a stalled connection can never hang the whole run.
 HTTP_TIMEOUT = (10, 30)
 
+# iTunes' unauthenticated Search API allows ~20 requests/minute, so space the
+# iTunes calls (only hit as a fallback) to stay comfortably under that.
+ITUNES_MIN_INTERVAL = 2.0
+
 OPENLIBRARY_COVER_ISBN = "https://covers.openlibrary.org/b/isbn/{isbn}-L.jpg?default=false"
 OPENLIBRARY_COVER_ID = "https://covers.openlibrary.org/b/id/{cover_id}-L.jpg?default=false"
 OPENLIBRARY_SEARCH = "https://openlibrary.org/search.json"
+ITUNES_SEARCH = "https://itunes.apple.com/search"
 
 # Magic-byte signatures -> file extension. Only these are accepted as covers.
 _IMAGE_SIGNATURES = (
@@ -128,6 +135,33 @@ def _openlibrary_search_cover_id(title: str, author: str) -> int | None:
     return cover_id if isinstance(cover_id, int) and cover_id > 0 else None
 
 
+def _itunes_artwork_url(title: str, author: str) -> str | None:
+    """Look up cover artwork for a title (+author) via the iTunes Search API.
+
+    The API returns a 100x100 ``artworkUrl100``; the dimension segment can be
+    swapped for a larger size to get a usable-resolution image.
+    """
+    term = f"{title} {author}".strip()
+    response = _request(
+        "get", ITUNES_SEARCH, params={"term": term, "entity": "ebook", "limit": 1}
+    )
+    # iTunes is gentle about volume; space calls out to respect its rate limit.
+    time.sleep(ITUNES_MIN_INTERVAL)
+    if response is None or response.status_code != 200:
+        return None
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+    results = payload.get("results") or []
+    if not results:
+        return None
+    artwork = results[0].get("artworkUrl100")
+    if not artwork:
+        return None
+    return artwork.replace("100x100bb", "600x600bb")
+
+
 def resolve_cover(book: dict[str, Any]) -> tuple[bytes, str, str, str] | None:
     """Resolve a cover for one book.
 
@@ -156,6 +190,15 @@ def resolve_cover(book: dict[str, Any]) -> tuple[bytes, str, str, str] | None:
                 data, ext = result
                 return data, "openlibrary:search", url, ext
 
+    # 3. iTunes / Apple Books Search by title + author.
+    if title:
+        artwork_url = _itunes_artwork_url(title, author)
+        if artwork_url:
+            result = _download_image(artwork_url)
+            if result is not None:
+                data, ext = result
+                return data, "itunes:search", artwork_url, ext
+
     return None
 
 
@@ -173,12 +216,16 @@ def _remove_existing(data_dir: str | Path, cover_path: str | None) -> None:
         pass
 
 
-def _should_skip(status: str | None, refresh: bool) -> bool:
+def _should_skip(status: str | None, refresh: bool, retry_missing: bool) -> bool:
     if status == "manual":
         return True  # never clobber a manual cover
     if refresh:
-        return False
-    return status in ("fetched", "not_found")
+        return False  # reconsider everything (except manual)
+    if status == "fetched":
+        return True
+    if status == "not_found":
+        return not retry_missing  # retry_missing re-attempts past misses
+    return False  # None / error -> always process
 
 
 def fetch_covers(
@@ -187,12 +234,15 @@ def fetch_covers(
     *,
     limit: int | None = None,
     refresh: bool = False,
+    retry_missing: bool = False,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Fetch covers for books that need them.
 
     ``limit`` caps the number of books *attempted* (not merely scanned), which
-    makes ``--limit 5`` useful for trial runs. Returns summary stats.
+    makes ``--limit 5`` useful for trial runs. ``retry_missing`` re-attempts
+    books previously marked ``not_found`` (e.g. after adding a new source) while
+    leaving already-fetched and manual covers untouched. Returns summary stats.
     """
     if limit is not None and limit < 1:
         raise CoversError("limit must be at least 1.")
@@ -209,7 +259,7 @@ def fetch_covers(
             # Without a stable id we can't name a file or serve it in the web UI.
             skipped += 1
             continue
-        if _should_skip(book.get("cover_status"), refresh):
+        if _should_skip(book.get("cover_status"), refresh, retry_missing):
             skipped += 1
             continue
         if limit is not None and attempted >= limit:

@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from adso import covers, db
-from adso.covers import OPENLIBRARY_SEARCH, fetch_covers, set_manual_cover
+from adso.covers import ITUNES_SEARCH, OPENLIBRARY_SEARCH, fetch_covers, set_manual_cover
 
 JPEG_BYTES = b"\xff\xd8\xff\xe0" + b"\x00" * 32
 PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
@@ -127,6 +127,8 @@ class CoversTests(unittest.TestCase):
                 return FakeResp(content=NOT_AN_IMAGE)  # 200 but not an image
             if url == OPENLIBRARY_SEARCH:
                 return FakeResp(json_data=ol_search_payload(None))
+            if url == ITUNES_SEARCH:
+                return FakeResp(json_data={"results": []})
             raise AssertionError(f"unexpected request to {url}")
 
         with patch("adso.covers._request", side_effect=fake_request):
@@ -137,6 +139,59 @@ class CoversTests(unittest.TestCase):
         self.assertEqual(book["cover_status"], "not_found")
         self.assertIsNone(book["cover_path"])
         self.assertFalse((self.root / "covers").exists())
+
+    def test_falls_back_to_itunes_when_open_library_misses(self) -> None:
+        self._add_book("9", "Indie Title", isbn13="9999999999999", author="Small Press")
+        artwork = "https://is1-ssl.mzstatic.com/image/thumb/abc/600x600bb.jpg"
+
+        def fake_request(method, url, **kwargs):
+            if url.startswith("https://covers.openlibrary.org"):
+                return FakeResp(status_code=404)
+            if url == OPENLIBRARY_SEARCH:
+                return FakeResp(json_data=ol_search_payload(None))
+            if url == ITUNES_SEARCH:
+                return FakeResp(json_data={"results": [{"artworkUrl100":
+                    "https://is1-ssl.mzstatic.com/image/thumb/abc/100x100bb.jpg"}]})
+            if url == artwork:
+                return FakeResp(content=JPEG_BYTES)
+            raise AssertionError(f"unexpected request to {url}")
+
+        with patch("adso.covers._request", side_effect=fake_request):
+            result = fetch_covers(self.conn, self.root)
+
+        self.assertEqual(result["fetched"], 1)
+        book = self._book("9")
+        self.assertEqual(book["cover_source"], "itunes:search")
+        self.assertEqual(book["cover_source_url"], artwork)  # 100x100 upscaled to 600x600
+        self.assertTrue((self.root / "covers" / "9.jpg").is_file())
+
+    def test_retry_missing_reattempts_not_found_only(self) -> None:
+        self._add_book("10", "Was Missing", isbn13="9780156001311")
+        # First pass: everything misses -> not_found.
+        def all_miss(method, url, **kwargs):
+            if url.startswith("https://covers.openlibrary.org"):
+                return FakeResp(status_code=404)
+            if url == OPENLIBRARY_SEARCH:
+                return FakeResp(json_data=ol_search_payload(None))
+            if url == ITUNES_SEARCH:
+                return FakeResp(json_data={"results": []})
+            raise AssertionError(f"unexpected request to {url}")
+
+        with patch("adso.covers._request", side_effect=all_miss):
+            fetch_covers(self.conn, self.root)
+        self.assertEqual(self._book("10")["cover_status"], "not_found")
+
+        # A normal run skips not_found; --retry-missing re-attempts it.
+        ol_hit = lambda m, u, **k: FakeResp(content=JPEG_BYTES) if u.startswith(
+            "https://covers.openlibrary.org") else FakeResp(status_code=404)
+        with patch("adso.covers._request", side_effect=ol_hit):
+            plain = fetch_covers(self.conn, self.root)
+            retry = fetch_covers(self.conn, self.root, retry_missing=True)
+
+        self.assertEqual(plain["skipped"], 1)   # not_found skipped on a normal run
+        self.assertEqual(plain["fetched"], 0)
+        self.assertEqual(retry["fetched"], 1)   # retry_missing re-attempts it
+        self.assertEqual(self._book("10")["cover_status"], "fetched")
 
     def test_idempotency_and_refresh(self) -> None:
         self._add_book("5", "Repeat", isbn13="9780156001311")

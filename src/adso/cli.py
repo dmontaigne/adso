@@ -90,6 +90,7 @@ def main(argv: list[str] | None = None) -> int:
                 _data_dir(args.db),
                 limit=args.limit,
                 refresh=args.refresh,
+                retry_missing=args.retry_missing,
                 dry_run=args.dry_run,
             )
             print(_format_cover_result(result, dry_run=args.dry_run))
@@ -256,6 +257,11 @@ def _build_parser() -> argparse.ArgumentParser:
     covers_parser.add_argument("--limit", type=int, help="Maximum number of books to fetch covers for")
     covers_parser.add_argument(
         "--refresh", action="store_true", help="Re-fetch even books already tried (skips manual covers)"
+    )
+    covers_parser.add_argument(
+        "--retry-missing",
+        action="store_true",
+        help="Re-attempt books previously marked not found (keeps already-fetched covers)",
     )
     covers_parser.add_argument(
         "--dry-run", action="store_true", help="Report what would be fetched without writing files"
