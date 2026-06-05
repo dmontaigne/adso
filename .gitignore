@@ -6,6 +6,7 @@ goodreads_library_export.csv
 __pycache__/
 *.py[cod]
 *.sqlite
+*.sqlite.bak*
 *.sqlite3
 *.db
 .pytest_cache/
@@ -17,3 +18,4 @@ reports/
 exports/
 node_modules/
 .claude/
+.DS_Store
