@@ -1,0 +1,38 @@
+# Pinned dependency lockfile for Adso's optional extras (notion, web).
+# The core CLI has no runtime dependencies and needs none of this.
+#
+# Requires Python >= 3.10 (these pins target the Python 3.13 reference
+# environment; e.g. anyio 4.13 requires >=3.10). The dependency-free core CLI
+# still runs on Python 3.9+ — only the extras need a newer interpreter.
+#
+# Reproducible install:
+#   python3 -m venv .venv && . .venv/bin/activate
+#   pip install -r requirements-lock.txt && pip install -e ".[web,notion]"
+#
+# Regenerate after changing deps:  pip freeze (filtered, excluding adso/pip/setuptools/wheel)
+annotated-doc==0.0.4
+annotated-types==0.7.0
+anyio==4.13.0
+certifi==2026.4.22
+charset-normalizer==3.4.7
+click==8.4.1
+fastapi==0.136.3
+h11==0.16.0
+httptools==0.8.0
+idna==3.13
+Jinja2==3.1.6
+MarkupSafe==3.0.3
+pydantic==2.13.4
+pydantic_core==2.46.4
+python-dotenv==1.2.2
+python-multipart==0.0.30
+PyYAML==6.0.3
+requests==2.33.1
+starlette==1.2.1
+typing-inspection==0.4.2
+typing_extensions==4.15.0
+urllib3==2.6.3
+uvicorn==0.49.0
+uvloop==0.22.1
+watchfiles==1.2.0
+websockets==16.0
