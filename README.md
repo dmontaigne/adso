@@ -1,5 +1,9 @@
 # Adso
 
+> **Goodreads is where your friends are. Adso is where your library lives.**
+
+**Adso is a home for your library** — a sovereign, local-first copy you own, fed from Goodreads, that outlives any single app or service. Stay on Goodreads for the network; keep an easily-synced copy in Adso that is yours, does more than Goodreads' roadmap offers, and happens to also be a backup.
+
 Adso is a local-first Goodreads backup and personal library catalogue. It treats Goodreads, Notion, and future services as sync surfaces or inbound feeds, while your own local catalogue remains the source of truth.
 
 The first version is CLI-first and SQLite-backed so the core can later power a local web app, desktop app, add-ons, or agent workflows without rewriting the sync model.
@@ -111,38 +115,20 @@ adso --profile production export notion   # use a specific profile for one comma
 
 Settings resolve with the precedence **CLI flag → environment variable → active profile → built-in default**, so environment variables stay authoritative for automation (CI, scripts). Config is read from `./adso.ini` first (use `--local` to write there) and then `~/.config/adso/config.ini`, so a portable library folder can carry its own settings. Keep your `NOTION_API_KEY` in the environment rather than in the file. `adso doctor` shows the active profile and which config files are in effect.
 
-## Web UI (v2, preview)
+## Web UI (experimental preview)
 
-Adso ships a local web interface over the same canonical SQLite catalogue. Install the web extra and start the server:
+Adso v1 is **CLI-first** — the commands above are the supported, stable surface. An
+optional local web UI exists over the same SQLite catalogue, but it is an early
+preview and not part of the v1 surface. If you're curious, it installs via an extra:
 
 ```bash
 pip install -e ".[web]"
-adso serve            # opens http://127.0.0.1:8000
+adso serve            # opens http://127.0.0.1:8000 — preview, expect rough edges
 ```
 
-Options: `adso serve --host 0.0.0.0 --port 8080 --no-browser`. The `--db` flag applies as usual (`adso --db path/to/adso.sqlite serve`). The web layer reuses the same query and conflict services as the CLI, so it reads and writes exactly the same database. A JSON API lives at `/api/books` and `/api/conflicts` with interactive docs at `/api/docs`.
-
-The web UI's centrepiece is **visual conflict resolution** at `/conflicts`: each conflicting field is shown with your preserved local value and the incoming Goodreads value side by side (plus the previously-synced value for context). Resolve each field by keeping the local value, using the Goodreads value, or entering a custom value — individually or per book. The same operations are available from the terminal with `adso conflicts` and `adso resolve`.
-
-To try conflict resolution on throwaway data, seed a demo database with sample conflicts:
-
-```bash
-python examples/seed_conflicts.py        # writes /tmp/adso-demo.sqlite
-adso --db /tmp/adso-demo.sqlite serve
-```
-
-You can also **import a Goodreads export** straight from the browser at `/import` — upload the CSV and Adso runs it through the same engine as `adso import`/`sync`, showing a summary (new / updated / unchanged / conflicts) with links to review. Imports run against the database the server was started with, and your local fields are protected exactly as on the CLI.
-
-The **activity view** at `/activity` lists every import and sync against your catalogue, newest first, with the row count and the created / updated / unchanged / conflict breakdown for each run.
-
-### Rebuilding styles (contributors only)
-
-The stylesheet at `src/adso/web/static/app.css` is prebuilt and committed, so **running** the app never needs Node.js. To change the styling, rebuild it with Tailwind + Basecoat:
-
-```bash
-npm install
-npm run build:css     # one-off build; or `npm run watch:css` while iterating
-```
+It reuses the same query, import, and conflict-resolution services as the CLI, so it
+reads and writes exactly the same database. It will get a proper write-up in a future
+v2 release.
 
 ## Book covers
 
@@ -172,7 +158,7 @@ adso set-cover GOODREADS_ID --url https://example.com/cover.jpg
 adso set-cover GOODREADS_ID --file path/to/cover.jpg
 ```
 
-Covers are also fetched automatically after `adso import`/`sync` goodreads; pass `--no-covers` to skip that. In the web UI, covers appear as a shelf-grid view and table thumbnails on the catalogue, and full size on each book's detail page. The downloaded images are for personal catalogue use.
+Covers are also fetched automatically after `adso import`/`sync` goodreads; pass `--no-covers` to skip that. The downloaded images are stored locally beside your database for personal catalogue use.
 
 ## Notion
 
