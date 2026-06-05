@@ -25,11 +25,10 @@ so environment variables stay authoritative for automation (CI, scripts).
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from configparser import ConfigParser
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Mapping
-
 
 DEFAULT_DB = "adso.sqlite"
 PROJECT_CONFIG_BASENAME = "adso.ini"

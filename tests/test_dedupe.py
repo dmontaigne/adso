@@ -6,8 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from adso import db
-from adso import dedupe
+from adso import db, dedupe
 
 
 class DedupeTests(unittest.TestCase):
@@ -81,7 +80,8 @@ class DedupeTests(unittest.TestCase):
 
     def test_merge_keeps_keeper_and_deletes_dropped(self) -> None:
         keep = self._insert("1", "Project Hail Mary", reading_status="Read")
-        drop = self._insert("2", "Project Hail Mary", reading_status="Currently Reading")
+        # Second record is the duplicate that should be folded away and deleted.
+        self._insert("2", "Project Hail Mary", reading_status="Currently Reading")
         dedupe.scan_duplicates(self.conn)
         group = dedupe.list_open_duplicates(self.conn)[0]
         outcome = dedupe.merge_duplicate(self.conn, group["group_key"], keep_id=keep)

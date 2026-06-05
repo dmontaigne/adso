@@ -20,6 +20,9 @@ web = [
   "jinja2>=3.1",
   "python-multipart>=0.0.9",
 ]
+dev = [
+  "ruff>=0.4",
+]
 
 [project.scripts]
 adso = "adso.cli:main"
@@ -29,3 +32,14 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 adso = ["web/templates/*.html", "web/static/*", "web/static/vendor/*"]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+extend-exclude = ["prototypes", ".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+# Line length is advisory for this project; enforcing it would churn a lot of
+# existing lines without improving correctness.
+ignore = ["E501"]

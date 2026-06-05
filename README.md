@@ -66,6 +66,21 @@ adso export notion --limit 1
 
 `adso import goodreads` and `adso sync goodreads` both preserve raw import rows. `sync` additionally writes a conflict report when a Goodreads update would overwrite a local change.
 
+## Configuration profiles
+
+By default Adso uses `adso.sqlite` in the current directory and reads Notion credentials from the environment. *Profiles* let you bundle a database path with a Notion target and switch them as a unit — most usefully to keep a throwaway **sandbox** Notion database separate from your real **production** one, so a test run can't write to the wrong place.
+
+```bash
+adso config init                  # write a starter config you can edit
+adso config set sandbox notion-database-id <test-db-id> --local
+adso config use sandbox           # make it the default profile
+adso config list                  # see profiles and which is active
+adso config show                  # resolved settings (API key masked)
+adso --profile production export notion   # use a specific profile for one command
+```
+
+Settings resolve with the precedence **CLI flag → environment variable → active profile → built-in default**, so environment variables stay authoritative for automation (CI, scripts). Config is read from `./adso.ini` first (use `--local` to write there) and then `~/.config/adso/config.ini`, so a portable library folder can carry its own settings. Keep your `NOTION_API_KEY` in the environment rather than in the file. `adso doctor` shows the active profile and which config files are in effect.
+
 ## Web UI (v2, preview)
 
 Adso ships a local web interface over the same canonical SQLite catalogue. Install the web extra and start the server:
@@ -200,3 +215,25 @@ Troubleshooting:
   retry with `--limit 1`.
 - API rate limits: Adso backs off for Notion `429` responses. If a large export is
   still noisy, retry with a smaller `--limit` first.
+
+## Development
+
+Install Adso in editable mode with the optional extras you want to work on:
+
+```bash
+pip install -e ".[web,notion,covers,dev]"
+```
+
+Run the test suite (stdlib `unittest`, no extra runner needed):
+
+```bash
+python -m unittest discover -s tests
+```
+
+Lint with [ruff](https://docs.astral.sh/ruff/):
+
+```bash
+ruff check .
+```
+
+Continuous integration (`.github/workflows/ci.yml`) runs the tests across Python 3.9–3.13, checks that the package installs from a clean checkout, and runs ruff on every push and pull request.

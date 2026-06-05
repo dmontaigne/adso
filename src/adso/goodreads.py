@@ -12,7 +12,6 @@ from typing import Any
 
 from .errors import GoodreadsImportError
 
-
 STATUS_MAP = {
     "to-read": "To Read",
     "currently-reading": "Currently Reading",

@@ -10,7 +10,6 @@ from typing import Any
 from . import db, dedupe
 from .goodreads import GoodreadsRecord, read_goodreads_csv
 
-
 # Volatile Goodreads-side fields that should never count as a tracked change or
 # raise a conflict. Their value is still refreshed silently so the catalogue
 # stays current, but routine drift (community ratings moving, edition/metadata

@@ -11,9 +11,9 @@ from __future__ import annotations
 import os
 import sqlite3
 import tempfile
+from collections.abc import Iterator
 from html import escape
 from pathlib import Path
-from typing import Iterator
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, Response

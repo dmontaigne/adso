@@ -10,8 +10,11 @@ __pycache__/
 *.db
 *.sqlite-wal
 *.sqlite-shm
+*.sqlite.bak*
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
+.DS_Store
 dist/
 build/
 *.egg-info/

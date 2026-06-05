@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Mapping
-
 
 REQUIRED_TABLES = {
     "books",
@@ -26,7 +25,7 @@ def doctor_report(
     *,
     root: str | Path | None = None,
     env: Mapping[str, str] | None = None,
-    config: "object | None" = None,
+    config: object | None = None,
 ) -> str:
     db_path = Path(db_path)
     root_path = Path(root) if root is not None else Path.cwd()
@@ -88,7 +87,7 @@ def doctor_report(
     return "\n".join(lines)
 
 
-def _configuration_section(config: "object | None") -> list[str]:
+def _configuration_section(config: object | None) -> list[str]:
     """Render the Configuration block. Tolerates config=None (older callers)."""
     from . import config as config_module
 
