@@ -24,3 +24,7 @@ covers/
 *.log
 node_modules/
 .claude/
+
+# Internal working material — not for the public repo
+docs/
+prototypes/
