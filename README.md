@@ -52,6 +52,8 @@ adso list --owned true --location Office
 adso search "winter society" --owned true --limit 10
 adso show GOODREADS_ID
 adso edit GOODREADS_ID --owned true --copy-count 1 --location Office --shelf-box A1
+adso fetch-covers
+adso set-cover GOODREADS_ID --url https://example.com/cover.jpg
 adso conflicts
 adso resolve CONFLICT_ID --accept-incoming
 adso report conflicts --output reports/conflicts.md
@@ -96,6 +98,36 @@ The stylesheet at `src/adso/web/static/app.css` is prebuilt and committed, so **
 npm install
 npm run build:css     # one-off build; or `npm run watch:css` while iterating
 ```
+
+## Book covers
+
+Adso can fetch cover art for your catalogue and store the images locally, beside your database in a `covers/` directory. Covers are enrichment — they are never sourced from Goodreads and never participate in conflict resolution — and they are not committed to the repo, so each catalogue builds its own.
+
+Install the optional dependency and fetch covers:
+
+```bash
+pip install -e ".[covers]"
+adso fetch-covers                 # fetch covers for books that don't have one yet
+adso fetch-covers --limit 10 --dry-run   # preview without writing files
+adso fetch-covers --retry-missing # re-attempt books previously not found
+```
+
+For each book, Adso resolves a cover in order and keeps the first hit:
+
+1. **Open Library** cover by ISBN-13 / ISBN-10
+2. **Open Library Search** by title + author
+3. **Apple Books (iTunes Search)** by title + author
+
+All three are free public APIs that need no account or key. Adso is polite to them (spaced requests, backed-off retries) and remembers results, so re-running only fills gaps. Books with no cover from any source show a generated placeholder tile (the title's initials) in the web UI.
+
+Set a cover by hand for any book — automatic fetches never overwrite a manual cover:
+
+```bash
+adso set-cover GOODREADS_ID --url https://example.com/cover.jpg
+adso set-cover GOODREADS_ID --file path/to/cover.jpg
+```
+
+Covers are also fetched automatically after `adso import`/`sync` goodreads; pass `--no-covers` to skip that. In the web UI, covers appear as a shelf-grid view and table thumbnails on the catalogue, and full size on each book's detail page. The downloaded images are for personal catalogue use.
 
 ## Notion
 
