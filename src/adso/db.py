@@ -44,9 +44,18 @@ LOCAL_FIELDS = (
 
 
 def connect(db_path: str | Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path)
+    # check_same_thread=False: FastAPI may run a single request's dependency and
+    # endpoint on different threadpool threads, so the per-request connection has
+    # to cross threads. It is still only ever used by one thread at a time (never
+    # shared between concurrent requests), so disabling the guard is safe.
+    conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # WAL lets a reader (e.g. the web UI) and a writer (e.g. a cover fetch) work
+    # the same file concurrently without "database is locked"; busy_timeout makes
+    # any remaining contention wait rather than fail. WAL is persisted on the file.
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 15000")
     return conn
 
 
@@ -96,6 +105,11 @@ def initialize(conn: sqlite3.Connection) -> None:
             shelf_box TEXT,
             loaned_to TEXT,
             local_notes TEXT,
+            cover_path TEXT,
+            cover_source TEXT,
+            cover_source_url TEXT,
+            cover_status TEXT,
+            cover_fetched_at TEXT,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             last_goodreads_import_run_id INTEGER,
@@ -144,6 +158,7 @@ def initialize(conn: sqlite3.Connection) -> None:
         """
     )
     _migrate_sync_conflicts(conn)
+    _migrate_book_covers(conn)
     conn.commit()
 
 
@@ -154,6 +169,14 @@ def _migrate_sync_conflicts(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE sync_conflicts ADD COLUMN resolution TEXT")
     if "resolved_at" not in existing:
         conn.execute("ALTER TABLE sync_conflicts ADD COLUMN resolved_at TEXT")
+
+
+def _migrate_book_covers(conn: sqlite3.Connection) -> None:
+    """Add cover-art enrichment columns to books tables created before covers."""
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(books)")}
+    for column in ("cover_path", "cover_source", "cover_source_url", "cover_status", "cover_fetched_at"):
+        if column not in existing:
+            conn.execute(f"ALTER TABLE books ADD COLUMN {column} TEXT")
 
 
 def create_import_run(
@@ -314,6 +337,54 @@ def update_local_fields(
     assignments.append("updated_at = CURRENT_TIMESTAMP")
     values.append(book["id"])
     conn.execute(f"UPDATE books SET {', '.join(assignments)} WHERE id = ?", values)
+    conn.commit()
+
+
+def set_cover(
+    conn: sqlite3.Connection,
+    book_id: int,
+    *,
+    cover_path: str | None,
+    cover_source: str | None,
+    cover_source_url: str | None,
+    cover_status: str,
+) -> None:
+    """Record the outcome of a cover-art fetch for one book.
+
+    Covers are local enrichment, not a Goodreads-sourced field, so this writes
+    directly to the books row without touching source_snapshots/conflicts.
+    """
+    conn.execute(
+        """
+        UPDATE books
+        SET cover_path = ?,
+            cover_source = ?,
+            cover_source_url = ?,
+            cover_status = ?,
+            cover_fetched_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (cover_path, cover_source, cover_source_url, cover_status, book_id),
+    )
+    conn.commit()
+
+
+def clear_cover(conn: sqlite3.Connection, book_id: int) -> None:
+    """Reset all cover fields for one book (so the next fetch reconsiders it)."""
+    conn.execute(
+        """
+        UPDATE books
+        SET cover_path = NULL,
+            cover_source = NULL,
+            cover_source_url = NULL,
+            cover_status = NULL,
+            cover_fetched_at = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (book_id,),
+    )
     conn.commit()
 
 

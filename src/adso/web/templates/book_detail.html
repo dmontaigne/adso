@@ -2,10 +2,19 @@
 {% block title %}Adso · {{ book.title }}{% endblock %}
 {% block content %}
 <a href="/" class="text-sm text-muted-foreground hover:text-foreground">← Catalogue</a>
-<h1 class="mt-2 text-2xl font-semibold tracking-tight">{{ book.title }}</h1>
-<p class="mb-6 text-muted-foreground">
-  {{ book.author or "Unknown author" }}{% if book.additional_authors %}, {{ book.additional_authors }}{% endif %}
-</p>
+
+<div class="mt-2 mb-6 flex gap-6">
+  <img
+    src="/covers/{{ book.goodreads_id }}"
+    alt="Cover of {{ book.title }}"
+    class="h-48 w-32 shrink-0 rounded-lg border bg-muted object-cover">
+  <div>
+    <h1 class="text-2xl font-semibold tracking-tight">{{ book.title }}</h1>
+    <p class="text-muted-foreground">
+      {{ book.author or "Unknown author" }}{% if book.additional_authors %}, {{ book.additional_authors }}{% endif %}
+    </p>
+  </div>
+</div>
 
 <div class="grid gap-6 md:grid-cols-2">
   <div class="card">

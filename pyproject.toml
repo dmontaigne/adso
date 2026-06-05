@@ -35,6 +35,9 @@ notion = [
   "requests>=2.31",
   "python-dotenv>=1.0",
 ]
+covers = [
+  "requests>=2.31",
+]
 web = [
   "fastapi>=0.110",
   "uvicorn[standard]>=0.29",

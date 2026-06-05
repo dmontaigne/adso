@@ -9,6 +9,8 @@ __pycache__/
 *.sqlite.bak*
 *.sqlite3
 *.db
+*.sqlite-wal
+*.sqlite-shm
 .pytest_cache/
 .mypy_cache/
 dist/
@@ -16,6 +18,8 @@ build/
 *.egg-info/
 reports/
 exports/
+covers/
+*.log
 node_modules/
 .claude/
 .DS_Store

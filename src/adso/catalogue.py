@@ -237,6 +237,9 @@ def _book_result(row: sqlite3.Row) -> dict[str, Any]:
         "shelf_box": data["shelf_box"],
         "loaned_to": data["loaned_to"],
         "local_notes": data["local_notes"],
+        "cover_path": data.get("cover_path"),
+        "cover_status": data.get("cover_status"),
+        "cover_url": f"/covers/{data['goodreads_id']}" if data.get("goodreads_id") else None,
         "created_at": data["created_at"],
         "updated_at": data["updated_at"],
     }
