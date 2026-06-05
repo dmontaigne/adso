@@ -6,11 +6,11 @@ goodreads_library_export.csv
 __pycache__/
 *.py[cod]
 *.sqlite
+*.sqlite.bak*
 *.sqlite3
 *.db
 *.sqlite-wal
 *.sqlite-shm
-*.sqlite.bak*
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

@@ -31,6 +31,36 @@ adso show 100001
 
 For a fuller public-safe walkthrough, see [examples/demo.md](examples/demo.md).
 
+## Installation
+
+The core CLI has **no required runtime dependencies** — it installs with nothing
+beyond the standard library and runs on **Python 3.9+**. Optional features add
+dependencies via extras (these pull modern FastAPI/requests and need
+**Python 3.10+**):
+
+```bash
+pip install -e .              # core CLI only
+pip install -e ".[web]"       # + local web UI (adso serve)
+pip install -e ".[notion]"    # + Notion export adapter
+pip install -e ".[web,notion]"
+```
+
+### Reproducible install
+
+For a known-good, fully pinned environment covering all extras (Python 3.10+),
+install from the committed lockfile before installing Adso itself:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements-lock.txt
+pip install -e ".[web,notion]"
+```
+
+The pinned versions in [requirements-lock.txt](requirements-lock.txt) are what the
+project is tested against. `pyproject.toml` keeps looser version ranges for the
+extras so unpinned installs still resolve on a fresh machine.
+
 ## Core Ideas
 
 - SQLite is canonical.
@@ -237,3 +267,7 @@ ruff check .
 ```
 
 Continuous integration (`.github/workflows/ci.yml`) runs the tests across Python 3.9–3.13, checks that the package installs from a clean checkout, and runs ruff on every push and pull request.
+
+## License
+
+Adso is released under the [MIT License](LICENSE). Copyright (c) 2026 David Whipps.
