@@ -19,6 +19,10 @@
           Conflicts
           <span id="nav-conflict-badge">{% if pending_count %}<span class="badge-destructive">{{ pending_count }}</span>{% endif %}</span>
         </a>
+        <a href="/duplicates" class="flex items-center gap-1.5 text-muted-foreground hover:text-foreground">
+          Duplicates
+          <span id="nav-duplicate-badge">{% if duplicate_count %}<span class="badge-destructive">{{ duplicate_count }}</span>{% endif %}</span>
+        </a>
       </nav>
     </div>
   </header>

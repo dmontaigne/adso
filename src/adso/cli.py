@@ -7,6 +7,7 @@ from pathlib import Path
 
 from . import conflicts as conflicts_service
 from . import db
+from . import dedupe as dedupe_service
 from .catalogue import BookFilters, get_book, list_books, search_books
 from .covers import CoversError, fetch_covers, set_manual_cover
 from .doctor import doctor_report
@@ -115,6 +116,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "conflicts":
             groups = conflicts_service.list_open_conflicts(conn)
             print(_format_conflicts(groups))
+            return 0
+
+        if args.command == "dedupe":
+            dedupe_service.scan_duplicates(conn)
+            groups = dedupe_service.list_open_duplicates(conn)
+            print(_format_duplicates(groups))
             return 0
 
         if args.command == "resolve":
@@ -284,6 +291,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("conflicts", help="List pending sync conflicts with their IDs")
 
+    subparsers.add_parser(
+        "dedupe", help="Scan the catalogue for duplicate books (merge them in the web UI)"
+    )
+
     resolve_parser = subparsers.add_parser("resolve", help="Resolve a sync conflict by ID")
     resolve_parser.add_argument("conflict_id", type=int, help="Conflict ID (see `adso conflicts`)")
     resolve_group = resolve_parser.add_mutually_exclusive_group()
@@ -438,6 +449,28 @@ def _format_conflicts(groups: list[dict[str, object]]) -> str:
             )
     lines.append("")
     lines.append(f"{total} pending conflict(s). Resolve with `adso resolve ID [--accept-incoming|--set VALUE]`.")
+    return "\n".join(lines)
+
+
+def _format_duplicates(groups: list[dict[str, object]]) -> str:
+    if not groups:
+        return "No suspected duplicates."
+    lines: list[str] = []
+    for group in groups:
+        if lines:
+            lines.append("")
+        author = group.get("author") or "Unknown author"
+        lines.append(f"{group['title']} — {author} ({group['count']} records)")
+        for book in group["books"]:  # type: ignore[index]
+            keeper = " (keep — newest)" if book["id"] == group["suggested_keeper_id"] else ""
+            lines.append(
+                f"  Goodreads ID {book['goodreads_id'] or '?'}: "
+                f"{book['reading_status'] or '—'}{keeper}"
+            )
+    lines.append("")
+    lines.append(
+        f"{len(groups)} duplicate group(s). Review and merge them in the web UI under Duplicates."
+    )
     return "\n".join(lines)
 
 

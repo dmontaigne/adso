@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from . import db
+from . import db, dedupe
 from .goodreads import GoodreadsRecord, read_goodreads_csv
 
 
@@ -117,7 +117,10 @@ def import_goodreads_csv(
 
         existing = db.get_book_by_goodreads_id(conn, goodreads_id)
         if existing is None:
-            db.insert_book_from_goodreads(conn, normalized, import_run_id=import_run_id)
+            new_book_id = db.insert_book_from_goodreads(conn, normalized, import_run_id=import_run_id)
+            # A re-IDed Goodreads edition arrives as a "new" book; flag it for
+            # review if it duplicates an existing record (see adso.dedupe).
+            dedupe.flag_duplicates_for_book(conn, new_book_id)
             created += 1
             continue
 

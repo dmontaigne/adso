@@ -1,0 +1,8 @@
+{# Returned after a group is merged or dismissed; replaces the group card. #}
+<div id="dup-group-{{ slug }}" class="card">
+  <section class="py-4 text-sm text-muted-foreground">
+    <span class="font-medium text-foreground">{{ title }}</span>
+    — {{ outcome_label }}{% if merged %} this record{% endif %}.
+  </section>
+</div>
+<span id="nav-duplicate-badge" hx-swap-oob="true">{% if duplicate_count %}<span class="badge-destructive">{{ duplicate_count }}</span>{% endif %}</span>
