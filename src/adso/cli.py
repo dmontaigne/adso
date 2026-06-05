@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import sqlite3
+import sys
 from pathlib import Path
 
 from . import config as config_module
@@ -13,6 +15,7 @@ from .catalogue import BookFilters, get_book, list_books, search_books
 from .config import DEFAULT_DB, ResolvedConfig
 from .covers import CoversError, fetch_covers, set_manual_cover
 from .doctor import doctor_report
+from .errors import AdsoError
 from .exports import export_csv, export_json
 from .notion import NotionConfigError, export_to_notion
 from .reports import (
@@ -27,7 +30,34 @@ from .sync import import_goodreads_csv
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
+    try:
+        return _dispatch(args, parser)
+    except AdsoError as exc:
+        return _fail(exc, hint=exc.hint)
+    except NotionConfigError as exc:
+        return _fail(
+            exc,
+            hint="Set NOTION_API_KEY / NOTION_DB_ID, or pick a profile with `adso config use`.",
+        )
+    except CoversError as exc:
+        return _fail(exc)
+    except sqlite3.DatabaseError as exc:
+        return _fail(f"catalogue database problem: {exc}", hint="Try `adso doctor`.")
+    except (FileNotFoundError, PermissionError, IsADirectoryError) as exc:
+        return _fail(exc)
+    except KeyboardInterrupt:
+        print("Cancelled.", file=sys.stderr)
+        return 130
 
+
+def _fail(error: object, *, hint: str | None = None) -> int:
+    print(f"Error: {error}", file=sys.stderr)
+    if hint:
+        print(f"Next: {hint}", file=sys.stderr)
+    return 1
+
+
+def _dispatch(args, parser) -> int:
     if args.command == "config":
         return _run_config(args, parser)
 
@@ -102,17 +132,16 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "set-cover":
-            try:
-                outcome = set_manual_cover(
-                    conn, _data_dir(cfg.db_path), args.goodreads_id, url=args.url, file=args.file
-                )
-            except CoversError as exc:
-                parser.error(str(exc))
+            outcome = set_manual_cover(
+                conn, _data_dir(cfg.db_path), args.goodreads_id, url=args.url, file=args.file
+            )
             print(f"Set manual cover for {outcome['title']} → {outcome['cover_path']}")
             return 0
 
         if args.command == "edit":
             updates = _local_updates_from_args(args)
+            if not updates:
+                parser.error("No local fields provided to update.")
             db.update_local_fields(conn, args.goodreads_id, updates)
             print(f"Updated local catalogue fields for Goodreads ID {args.goodreads_id}")
             return 0
@@ -140,7 +169,9 @@ def main(argv: list[str] | None = None) -> int:
                     conn, args.conflict_id, choice=choice, custom_value=custom
                 )
             except ValueError as exc:
-                parser.error(str(exc))
+                raise AdsoError(
+                    str(exc), hint="Run `adso conflicts` to list open conflict IDs."
+                ) from exc
             message = f"Resolved conflict {args.conflict_id} ({outcome['field_label']}): {outcome['resolution_label']}"
             if outcome["value"]:
                 message += f" → {outcome['value']}"
@@ -175,16 +206,13 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "export" and args.target == "notion":
             print(_notion_target_banner(cfg))
-            try:
-                result = export_to_notion(
-                    conn,
-                    api_key=cfg.notion_api_key,
-                    database_id=cfg.notion_database_id,
-                    dry_run=args.dry_run,
-                    limit=args.limit,
-                )
-            except NotionConfigError as exc:
-                parser.error(str(exc))
+            result = export_to_notion(
+                conn,
+                api_key=cfg.notion_api_key,
+                database_id=cfg.notion_database_id,
+                dry_run=args.dry_run,
+                limit=args.limit,
+            )
             print(_format_notion_export_result(result, dry_run=args.dry_run))
             return 0
 
@@ -197,11 +225,11 @@ def main(argv: list[str] | None = None) -> int:
 def _run_server(db_path: str, *, host: str, port: int, open_browser: bool) -> int:
     try:
         import uvicorn
-    except ModuleNotFoundError:
-        raise SystemExit(
-            "The web UI needs extra dependencies. Install them with:\n"
-            "    pip install -e '.[web]'"
-        )
+    except ModuleNotFoundError as exc:
+        raise AdsoError(
+            "The web UI needs extra dependencies.",
+            hint="Install them with: pip install -e '.[web]'",
+        ) from exc
 
     from .web.app import create_app
 
@@ -521,8 +549,6 @@ def _local_updates_from_args(args) -> dict[str, object]:
         value = getattr(args, arg_name)
         if value is not None:
             updates[field_name] = value
-    if not updates:
-        raise SystemExit("No local fields provided to update.")
     return updates
 
 
