@@ -12,15 +12,14 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-from adso.catalogue import BookFilters, get_book, list_books, search_books
 from adso import db
+from adso.catalogue import BookFilters, get_book, list_books, search_books
 from adso.cli import main as cli_main
 from adso.doctor import doctor_report
-from adso.notion import NotionConfigError, _load_existing_pages, export_to_notion
 from adso.exports import export_csv, export_json
+from adso.notion import NotionConfigError, _load_existing_pages, export_to_notion
 from adso.reports import latest_conflicts_markdown, latest_sync_summary_markdown
 from adso.sync import import_goodreads_csv
-
 
 HEADERS = [
     "Book Id",

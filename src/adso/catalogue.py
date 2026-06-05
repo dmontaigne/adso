@@ -92,6 +92,24 @@ def search_books(
     return [_book_result(row) for row in rows]
 
 
+def distinct_statuses(conn: sqlite3.Connection) -> list[str]:
+    rows = conn.execute(
+        "SELECT DISTINCT reading_status FROM books "
+        "WHERE reading_status IS NOT NULL AND reading_status != '' "
+        "ORDER BY reading_status COLLATE NOCASE"
+    ).fetchall()
+    return [row[0] for row in rows]
+
+
+def distinct_locations(conn: sqlite3.Connection) -> list[str]:
+    rows = conn.execute(
+        "SELECT DISTINCT location FROM books "
+        "WHERE location IS NOT NULL AND location != '' "
+        "ORDER BY location COLLATE NOCASE"
+    ).fetchall()
+    return [row[0] for row in rows]
+
+
 def get_book(conn: sqlite3.Connection, goodreads_id: str) -> dict[str, Any] | None:
     row = db.get_book_by_goodreads_id(conn, goodreads_id)
     if row is None:

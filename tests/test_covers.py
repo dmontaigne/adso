@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from adso import covers, db
+from adso import db
 from adso.covers import ITUNES_SEARCH, OPENLIBRARY_SEARCH, fetch_covers, set_manual_cover
 
 JPEG_BYTES = b"\xff\xd8\xff\xe0" + b"\x00" * 32
@@ -182,8 +182,11 @@ class CoversTests(unittest.TestCase):
         self.assertEqual(self._book("10")["cover_status"], "not_found")
 
         # A normal run skips not_found; --retry-missing re-attempts it.
-        ol_hit = lambda m, u, **k: FakeResp(content=JPEG_BYTES) if u.startswith(
-            "https://covers.openlibrary.org") else FakeResp(status_code=404)
+        def ol_hit(m, u, **k):
+            if u.startswith("https://covers.openlibrary.org"):
+                return FakeResp(content=JPEG_BYTES)
+            return FakeResp(status_code=404)
+
         with patch("adso.covers._request", side_effect=ol_hit):
             plain = fetch_covers(self.conn, self.root)
             retry = fetch_covers(self.conn, self.root, retry_missing=True)

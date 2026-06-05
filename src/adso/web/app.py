@@ -11,9 +11,9 @@ from __future__ import annotations
 import os
 import sqlite3
 import tempfile
+from collections.abc import Iterator
 from html import escape
 from pathlib import Path
-from typing import Iterator
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, Response
@@ -24,8 +24,16 @@ from .. import activity as activity_service
 from .. import conflicts as conflicts_service
 from .. import covers as covers_service
 from .. import db
+from .. import dedupe as dedupe_service
 from .. import sync as sync_service
-from ..catalogue import BookFilters, get_book, list_books, search_books
+from ..catalogue import (
+    BookFilters,
+    distinct_locations,
+    distinct_statuses,
+    get_book,
+    list_books,
+    search_books,
+)
 
 WEB_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = WEB_DIR / "templates"
@@ -139,8 +147,11 @@ def create_app(db_path: str | Path) -> FastAPI:
                 "owned": owned or "",
                 "location": location or "",
                 "author": author or "",
+                "statuses": distinct_statuses(conn),
+                "locations": distinct_locations(conn),
                 "count": len(books),
                 "pending_count": conflicts_service.pending_count(conn),
+                "duplicate_count": dedupe_service.pending_count(conn),
             },
         )
 
@@ -156,7 +167,11 @@ def create_app(db_path: str | Path) -> FastAPI:
         return templates.TemplateResponse(
             request,
             "book_detail.html",
-            {"book": book, "pending_count": conflicts_service.pending_count(conn)},
+            {
+                "book": book,
+                "pending_count": conflicts_service.pending_count(conn),
+                "duplicate_count": dedupe_service.pending_count(conn),
+            },
         )
 
     @app.get("/covers/{goodreads_id}")
@@ -213,7 +228,12 @@ def create_app(db_path: str | Path) -> FastAPI:
         return templates.TemplateResponse(
             request,
             "conflicts.html",
-            {"groups": groups, "total": total, "pending_count": total},
+            {
+                "groups": groups,
+                "total": total,
+                "pending_count": total,
+                "duplicate_count": dedupe_service.pending_count(conn),
+            },
         )
 
     @app.post("/conflicts/{conflict_id}/resolve", response_class=HTMLResponse)
@@ -262,7 +282,11 @@ def create_app(db_path: str | Path) -> FastAPI:
         return templates.TemplateResponse(
             request,
             "activity.html",
-            {"runs": runs, "pending_count": conflicts_service.pending_count(conn)},
+            {
+                "runs": runs,
+                "pending_count": conflicts_service.pending_count(conn),
+                "duplicate_count": dedupe_service.pending_count(conn),
+            },
         )
 
     @app.get("/import", response_class=HTMLResponse)
@@ -273,7 +297,10 @@ def create_app(db_path: str | Path) -> FastAPI:
         return templates.TemplateResponse(
             request,
             "import.html",
-            {"pending_count": conflicts_service.pending_count(conn)},
+            {
+                "pending_count": conflicts_service.pending_count(conn),
+                "duplicate_count": dedupe_service.pending_count(conn),
+            },
         )
 
     @app.post("/import", response_class=HTMLResponse)
@@ -327,7 +354,73 @@ def create_app(db_path: str | Path) -> FastAPI:
                     os.unlink(tmp_path)
 
         context["pending_count"] = conflicts_service.pending_count(conn)
+        context["duplicate_count"] = dedupe_service.pending_count(conn)
         return templates.TemplateResponse(request, "import.html", context)
+
+    @app.get("/duplicates", response_class=HTMLResponse)
+    def duplicates_page(
+        request: Request,
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> HTMLResponse:
+        groups = dedupe_service.list_open_duplicates(conn)
+        return templates.TemplateResponse(
+            request,
+            "duplicates.html",
+            {
+                "groups": groups,
+                "total": len(groups),
+                "pending_count": conflicts_service.pending_count(conn),
+                "duplicate_count": len(groups),
+            },
+        )
+
+    @app.post("/duplicates/scan", response_class=HTMLResponse)
+    def scan_duplicates(
+        request: Request,
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> HTMLResponse:
+        dedupe_service.scan_duplicates(conn)
+        groups = dedupe_service.list_open_duplicates(conn)
+        return templates.TemplateResponse(
+            request,
+            "duplicates.html",
+            {
+                "groups": groups,
+                "total": len(groups),
+                "pending_count": conflicts_service.pending_count(conn),
+                "duplicate_count": len(groups),
+            },
+        )
+
+    @app.post("/duplicates/merge", response_class=HTMLResponse)
+    def merge_duplicate(
+        request: Request,
+        conn: sqlite3.Connection = Depends(get_conn),
+        group_key: str = Form(...),
+        keep_id: int = Form(...),
+    ) -> HTMLResponse:
+        try:
+            outcome = dedupe_service.merge_duplicate(conn, group_key, keep_id=keep_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return templates.TemplateResponse(
+            request,
+            "_duplicate_resolved.html",
+            {"duplicate_count": dedupe_service.pending_count(conn), **outcome},
+        )
+
+    @app.post("/duplicates/dismiss", response_class=HTMLResponse)
+    def dismiss_duplicate(
+        request: Request,
+        conn: sqlite3.Connection = Depends(get_conn),
+        group_key: str = Form(...),
+    ) -> HTMLResponse:
+        outcome = dedupe_service.dismiss_duplicate(conn, group_key)
+        return templates.TemplateResponse(
+            request,
+            "_duplicate_resolved.html",
+            {"duplicate_count": dedupe_service.pending_count(conn), **outcome},
+        )
 
     @app.get("/api/conflicts")
     def api_conflicts(conn: sqlite3.Connection = Depends(get_conn)) -> dict:

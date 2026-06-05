@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .errors import GoodreadsImportError
 
 STATUS_MAP = {
     "to-read": "To Read",
@@ -99,9 +100,24 @@ def normalize_row(row: dict[str, str]) -> dict[str, Any]:
 
 def read_goodreads_csv(path: str | Path) -> list[GoodreadsRecord]:
     csv_path = Path(path)
-    with csv_path.open(newline="", encoding="utf-8-sig") as handle:
-        reader = csv.DictReader(handle)
-        return [
-            GoodreadsRecord(raw=dict(row), normalized=normalize_row(row))
-            for row in reader
-        ]
+    try:
+        with csv_path.open(newline="", encoding="utf-8-sig") as handle:
+            reader = csv.DictReader(handle)
+            return [
+                GoodreadsRecord(raw=dict(row), normalized=normalize_row(row))
+                for row in reader
+            ]
+    except FileNotFoundError as exc:
+        raise GoodreadsImportError(
+            f"Could not find a Goodreads CSV at {csv_path}.",
+            hint="Check the path, or run `adso doctor` to find nearby CSV exports.",
+        ) from exc
+    except IsADirectoryError as exc:
+        raise GoodreadsImportError(
+            f"{csv_path} is a directory, not a Goodreads CSV file.",
+        ) from exc
+    except (OSError, UnicodeDecodeError, csv.Error) as exc:
+        raise GoodreadsImportError(
+            f"Could not read the Goodreads CSV at {csv_path}: {exc}",
+            hint="Make sure it is a Goodreads CSV export. Run `adso doctor` to scan for valid files.",
+        ) from exc

@@ -8,7 +8,6 @@ from pathlib import Path
 
 from . import db
 
-
 EXPORT_FIELDS = [
     "goodreads_id",
     "title",

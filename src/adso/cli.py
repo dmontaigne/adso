@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import argparse
+import sqlite3
+import sys
 from pathlib import Path
 
+from . import config as config_module
 from . import conflicts as conflicts_service
 from . import db
+from . import dedupe as dedupe_service
 from .catalogue import BookFilters, get_book, list_books, search_books
+from .config import DEFAULT_DB, ResolvedConfig
 from .covers import CoversError, fetch_covers, set_manual_cover
 from .doctor import doctor_report
+from .errors import AdsoError
 from .exports import export_csv, export_json
 from .notion import NotionConfigError, export_to_notion
 from .reports import (
@@ -21,30 +27,59 @@ from .reports import (
 from .sync import import_goodreads_csv
 
 
-DEFAULT_DB = "adso.sqlite"
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
+    try:
+        return _dispatch(args, parser)
+    except AdsoError as exc:
+        return _fail(exc, hint=exc.hint)
+    except NotionConfigError as exc:
+        return _fail(
+            exc,
+            hint="Set NOTION_API_KEY / NOTION_DB_ID, or pick a profile with `adso config use`.",
+        )
+    except CoversError as exc:
+        return _fail(exc)
+    except sqlite3.DatabaseError as exc:
+        return _fail(f"catalogue database problem: {exc}", hint="Try `adso doctor`.")
+    except (FileNotFoundError, PermissionError, IsADirectoryError) as exc:
+        return _fail(exc)
+    except KeyboardInterrupt:
+        print("Cancelled.", file=sys.stderr)
+        return 130
+
+
+def _fail(error: object, *, hint: str | None = None) -> int:
+    print(f"Error: {error}", file=sys.stderr)
+    if hint:
+        print(f"Next: {hint}", file=sys.stderr)
+    return 1
+
+
+def _dispatch(args, parser) -> int:
+    if args.command == "config":
+        return _run_config(args, parser)
+
+    cfg = config_module.load(db_arg=args.db, profile_arg=args.profile)
 
     if args.command == "doctor":
-        print(doctor_report(args.db))
+        print(doctor_report(cfg.db_path, config=cfg))
         return 0
 
     if args.command == "serve":
         return _run_server(
-            args.db,
+            cfg.db_path,
             host=args.host,
             port=args.port,
             open_browser=not args.no_browser,
         )
 
-    conn = db.connect(args.db)
+    conn = db.connect(cfg.db_path)
     try:
         if args.command == "init":
             db.initialize(conn)
-            print(f"Initialized Adso catalogue at {args.db}")
+            print(f"Initialized Adso catalogue at {cfg.db_path}")
             return 0
 
         db.initialize(conn)
@@ -70,7 +105,7 @@ def main(argv: list[str] | None = None) -> int:
             summary = import_goodreads_csv(conn, args.csv, mode="import")
             print(latest_sync_summary_markdown(conn))
             if not args.no_covers:
-                _auto_fetch_covers(conn, args.db)
+                _auto_fetch_covers(conn, cfg.db_path)
             return 0
 
         if args.command == "sync" and args.source == "goodreads":
@@ -81,13 +116,13 @@ def main(argv: list[str] | None = None) -> int:
                 write_latest_conflicts(conn, output)
                 print(f"Conflict report: {output}")
             if not args.no_covers:
-                _auto_fetch_covers(conn, args.db)
+                _auto_fetch_covers(conn, cfg.db_path)
             return 0
 
         if args.command == "fetch-covers":
             result = fetch_covers(
                 conn,
-                _data_dir(args.db),
+                _data_dir(cfg.db_path),
                 limit=args.limit,
                 refresh=args.refresh,
                 retry_missing=args.retry_missing,
@@ -97,17 +132,16 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "set-cover":
-            try:
-                outcome = set_manual_cover(
-                    conn, _data_dir(args.db), args.goodreads_id, url=args.url, file=args.file
-                )
-            except CoversError as exc:
-                parser.error(str(exc))
+            outcome = set_manual_cover(
+                conn, _data_dir(cfg.db_path), args.goodreads_id, url=args.url, file=args.file
+            )
             print(f"Set manual cover for {outcome['title']} → {outcome['cover_path']}")
             return 0
 
         if args.command == "edit":
             updates = _local_updates_from_args(args)
+            if not updates:
+                parser.error("No local fields provided to update.")
             db.update_local_fields(conn, args.goodreads_id, updates)
             print(f"Updated local catalogue fields for Goodreads ID {args.goodreads_id}")
             return 0
@@ -115,6 +149,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "conflicts":
             groups = conflicts_service.list_open_conflicts(conn)
             print(_format_conflicts(groups))
+            return 0
+
+        if args.command == "dedupe":
+            dedupe_service.scan_duplicates(conn)
+            groups = dedupe_service.list_open_duplicates(conn)
+            print(_format_duplicates(groups))
             return 0
 
         if args.command == "resolve":
@@ -129,7 +169,9 @@ def main(argv: list[str] | None = None) -> int:
                     conn, args.conflict_id, choice=choice, custom_value=custom
                 )
             except ValueError as exc:
-                parser.error(str(exc))
+                raise AdsoError(
+                    str(exc), hint="Run `adso conflicts` to list open conflict IDs."
+                ) from exc
             message = f"Resolved conflict {args.conflict_id} ({outcome['field_label']}): {outcome['resolution_label']}"
             if outcome["value"]:
                 message += f" → {outcome['value']}"
@@ -163,10 +205,14 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "export" and args.target == "notion":
-            try:
-                result = export_to_notion(conn, dry_run=args.dry_run, limit=args.limit)
-            except NotionConfigError as exc:
-                parser.error(str(exc))
+            print(_notion_target_banner(cfg))
+            result = export_to_notion(
+                conn,
+                api_key=cfg.notion_api_key,
+                database_id=cfg.notion_database_id,
+                dry_run=args.dry_run,
+                limit=args.limit,
+            )
             print(_format_notion_export_result(result, dry_run=args.dry_run))
             return 0
 
@@ -179,11 +225,11 @@ def main(argv: list[str] | None = None) -> int:
 def _run_server(db_path: str, *, host: str, port: int, open_browser: bool) -> int:
     try:
         import uvicorn
-    except ModuleNotFoundError:
-        raise SystemExit(
-            "The web UI needs extra dependencies. Install them with:\n"
-            "    pip install -e '.[web]'"
-        )
+    except ModuleNotFoundError as exc:
+        raise AdsoError(
+            "The web UI needs extra dependencies.",
+            hint="Install them with: pip install -e '.[web]'",
+        ) from exc
 
     from .web.app import create_app
 
@@ -208,11 +254,22 @@ def _run_server(db_path: str, *, host: str, port: int, open_browser: bool) -> in
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Adso local-first book catalogue")
-    parser.add_argument("--db", default=DEFAULT_DB, help=f"SQLite database path (default: {DEFAULT_DB})")
+    parser.add_argument(
+        "--db",
+        default=None,
+        help=f"SQLite database path (overrides the active profile; default: {DEFAULT_DB})",
+    )
+    parser.add_argument(
+        "--profile",
+        default=None,
+        help="Configuration profile to use (see `adso config`)",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("init", help="Initialize the local catalogue database")
     subparsers.add_parser("doctor", help="Check local Adso setup and suggest next commands")
+
+    _add_config_parser(subparsers)
 
     serve_parser = subparsers.add_parser("serve", help="Run the local web UI")
     serve_parser.add_argument("--host", default="127.0.0.1", help="Host to bind (default: 127.0.0.1)")
@@ -284,6 +341,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("conflicts", help="List pending sync conflicts with their IDs")
 
+    subparsers.add_parser(
+        "dedupe", help="Scan the catalogue for duplicate books (merge them in the web UI)"
+    )
+
     resolve_parser = subparsers.add_parser("resolve", help="Resolve a sync conflict by ID")
     resolve_parser.add_argument("conflict_id", type=int, help="Conflict ID (see `adso conflicts`)")
     resolve_group = resolve_parser.add_mutually_exclusive_group()
@@ -313,6 +374,119 @@ def _build_parser() -> argparse.ArgumentParser:
     notion_export.add_argument("--limit", type=int, help="Maximum number of books to export")
 
     return parser
+
+
+def _add_config_parser(subparsers) -> None:
+    config_parser = subparsers.add_parser(
+        "config", help="Manage configuration profiles (database path, Notion target)"
+    )
+    config_sub = config_parser.add_subparsers(dest="config_command", required=True)
+
+    config_sub.add_parser("path", help="Show which config files are in effect")
+    config_sub.add_parser("list", help="List profiles and the active one")
+
+    show_parser = config_sub.add_parser("show", help="Show resolved settings for a profile")
+    show_parser.add_argument("profile", nargs="?", help="Profile name (default: active profile)")
+
+    set_parser = config_sub.add_parser("set", help="Set a profile setting")
+    set_parser.add_argument("profile", help="Profile name")
+    set_parser.add_argument(
+        "key",
+        help="Setting to change: " + ", ".join(sorted(config_module.PROFILE_KEYS)),
+    )
+    set_parser.add_argument("value", help="New value")
+    set_parser.add_argument(
+        "--local", action="store_true", help="Write to ./adso.ini instead of the user config"
+    )
+
+    use_parser = config_sub.add_parser("use", help="Set the default profile")
+    use_parser.add_argument("profile", help="Profile name to make default")
+    use_parser.add_argument(
+        "--local", action="store_true", help="Write to ./adso.ini instead of the user config"
+    )
+
+    init_parser = config_sub.add_parser("init", help="Write a starter config file")
+    init_parser.add_argument(
+        "--local", action="store_true", help="Write ./adso.ini instead of the user config"
+    )
+
+
+def _run_config(args, parser) -> int:
+    command = args.config_command
+
+    if command == "path":
+        user = config_module.user_config_path()
+        project = config_module.project_config_path()
+        lines = ["Config files (project-local overrides user-level):"]
+        for label, path in (("project", project), ("user", user)):
+            mark = "exists" if path.exists() else "not present"
+            lines.append(f"- {label}: {path} ({mark})")
+        print("\n".join(lines))
+        return 0
+
+    if command == "list":
+        profiles = config_module.list_profiles()
+        active = config_module.default_profile()
+        if not profiles:
+            print("No profiles defined yet. Create one with `adso config init`.")
+            return 0
+        lines = ["Profiles:"]
+        for name in profiles:
+            marker = " (default)" if name == active else ""
+            lines.append(f"- {name}{marker}")
+        print("\n".join(lines))
+        return 0
+
+    if command == "show":
+        profile = args.profile or config_module.default_profile()
+        if not profile:
+            parser.error("No profile given and no default profile set.")
+        settings = config_module.profile_settings(profile)
+        if not settings:
+            parser.error(f"No profile named '{profile}'. See `adso config list`.")
+        lines = [f"Profile '{profile}':"]
+        for key in ("db", "notion_database_id", "notion_target", "notion_api_key"):
+            if key not in settings:
+                continue
+            value = settings[key]
+            if key in config_module.SECRET_KEYS:
+                value = config_module.mask_secret(value)
+            lines.append(f"  {key} = {value}")
+        print("\n".join(lines))
+        return 0
+
+    if command == "set":
+        try:
+            path = config_module.set_value(
+                args.profile, args.key, args.value, local=args.local
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
+        print(f"Set {args.key} for profile '{args.profile}' in {path}")
+        return 0
+
+    if command == "use":
+        path = config_module.set_default_profile(args.profile, local=args.local)
+        print(f"Default profile set to '{args.profile}' in {path}")
+        return 0
+
+    if command == "init":
+        path, created = config_module.init_config(local=args.local)
+        if created:
+            print(f"Wrote starter config to {path}")
+        else:
+            print(f"Config already exists at {path} (left unchanged)")
+        return 0
+
+    parser.error("Unsupported config command.")
+    return 2
+
+
+def _notion_target_banner(cfg: ResolvedConfig) -> str:
+    profile = cfg.profile or "(none)"
+    target = cfg.notion_target or "(unnamed)"
+    db_id = cfg.notion_database_id or "(unset)"
+    return f"Notion target → profile: {profile}, target: {target}, database: {db_id}"
 
 
 def _data_dir(db_path: str) -> Path:
@@ -375,8 +549,6 @@ def _local_updates_from_args(args) -> dict[str, object]:
         value = getattr(args, arg_name)
         if value is not None:
             updates[field_name] = value
-    if not updates:
-        raise SystemExit("No local fields provided to update.")
     return updates
 
 
@@ -438,6 +610,28 @@ def _format_conflicts(groups: list[dict[str, object]]) -> str:
             )
     lines.append("")
     lines.append(f"{total} pending conflict(s). Resolve with `adso resolve ID [--accept-incoming|--set VALUE]`.")
+    return "\n".join(lines)
+
+
+def _format_duplicates(groups: list[dict[str, object]]) -> str:
+    if not groups:
+        return "No suspected duplicates."
+    lines: list[str] = []
+    for group in groups:
+        if lines:
+            lines.append("")
+        author = group.get("author") or "Unknown author"
+        lines.append(f"{group['title']} — {author} ({group['count']} records)")
+        for book in group["books"]:  # type: ignore[index]
+            keeper = " (keep — newest)" if book["id"] == group["suggested_keeper_id"] else ""
+            lines.append(
+                f"  Goodreads ID {book['goodreads_id'] or '?'}: "
+                f"{book['reading_status'] or '—'}{keeper}"
+            )
+    lines.append("")
+    lines.append(
+        f"{len(groups)} duplicate group(s). Review and merge them in the web UI under Duplicates."
+    )
     return "\n".join(lines)
 
 

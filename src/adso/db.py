@@ -8,7 +8,6 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-
 GOODREADS_FIELDS = (
     "title",
     "author",
@@ -153,6 +152,17 @@ def initialize(conn: sqlite3.Connection) -> None:
             resolved_at TEXT,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(import_run_id) REFERENCES import_runs(id) ON DELETE CASCADE,
+            FOREIGN KEY(book_id) REFERENCES books(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS duplicate_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_key TEXT NOT NULL,
+            book_id INTEGER NOT NULL,
+            reason TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(group_key, book_id),
             FOREIGN KEY(book_id) REFERENCES books(id) ON DELETE CASCADE
         );
         """
@@ -516,3 +526,119 @@ def set_conflict_resolution(
 def pending_conflict_count(conn: sqlite3.Connection) -> int:
     row = conn.execute("SELECT COUNT(*) FROM sync_conflicts WHERE status = 'pending'").fetchone()
     return int(row[0])
+
+
+# Default values that mean "no local enrichment set" for each local field, used
+# when merging duplicates to decide whether the keeper already has a value.
+_LOCAL_FIELD_EMPTY = {
+    "owned": 0,
+    "copy_count": 0,
+    "location": None,
+    "shelf_box": None,
+    "loaned_to": None,
+    "local_notes": None,
+}
+
+
+def insert_duplicate_link(
+    conn: sqlite3.Connection,
+    *,
+    group_key: str,
+    book_id: int,
+    reason: str | None = None,
+) -> None:
+    """Record a book as a pending member of a duplicate group (idempotent)."""
+    conn.execute(
+        """
+        INSERT INTO duplicate_links (group_key, book_id, reason)
+        VALUES (?, ?, ?)
+        ON CONFLICT(group_key, book_id) DO NOTHING
+        """,
+        (group_key, book_id, reason),
+    )
+
+
+def list_duplicate_links(
+    conn: sqlite3.Connection,
+    *,
+    status: str | None = "pending",
+) -> list[sqlite3.Row]:
+    clauses: list[str] = []
+    params: list[Any] = []
+    if status is not None:
+        clauses.append("d.status = ?")
+        params.append(status)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    return conn.execute(
+        f"""
+        SELECT d.*, b.title, b.author, b.goodreads_id, b.reading_status,
+               b.location, b.owned, b.local_notes, b.shelf_box, b.loaned_to,
+               b.cover_path, b.last_goodreads_import_run_id
+        FROM duplicate_links d
+        JOIN books b ON b.id = d.book_id
+        {where}
+        ORDER BY b.title COLLATE NOCASE, d.book_id
+        """,
+        params,
+    ).fetchall()
+
+
+def set_duplicate_group_status(
+    conn: sqlite3.Connection,
+    group_key: str,
+    *,
+    status: str,
+) -> None:
+    conn.execute(
+        "UPDATE duplicate_links SET status = ? WHERE group_key = ?",
+        (status, group_key),
+    )
+
+
+def dismissed_or_merged_group_keys(conn: sqlite3.Connection) -> set[str]:
+    rows = conn.execute(
+        "SELECT DISTINCT group_key FROM duplicate_links WHERE status IN ('dismissed', 'merged')"
+    ).fetchall()
+    return {row["group_key"] for row in rows}
+
+
+def pending_duplicate_group_count(conn: sqlite3.Connection) -> int:
+    row = conn.execute(
+        "SELECT COUNT(DISTINCT group_key) FROM duplicate_links WHERE status = 'pending'"
+    ).fetchone()
+    return int(row[0])
+
+
+def merge_books(conn: sqlite3.Connection, *, keep_id: int, drop_id: int) -> None:
+    """Fold the ``drop`` book into ``keep`` and delete the duplicate.
+
+    Local enrichment (LOCAL_FIELDS) from ``drop`` fills any field the keeper has
+    left empty, and the keeper inherits the dropped record's cover if it has none.
+    Child rows for ``drop`` are deleted explicitly (not relying on cascade) before
+    the book itself; raw_import_rows are import logs keyed on the run, not the
+    book, so they are left intact.
+    """
+    keep = get_book(conn, keep_id)
+    drop = get_book(conn, drop_id)
+    if keep is None or drop is None:
+        raise ValueError(f"merge_books needs two existing books (keep={keep_id}, drop={drop_id})")
+
+    updates: dict[str, Any] = {}
+    for field, empty in _LOCAL_FIELD_EMPTY.items():
+        if keep[field] == empty and drop[field] != empty:
+            updates[field] = drop[field]
+    if not keep["cover_path"] and drop["cover_path"]:
+        updates["cover_path"] = drop["cover_path"]
+        updates["cover_status"] = drop["cover_status"]
+
+    if updates:
+        assignments = [f"{field} = ?" for field in updates]
+        values = list(updates.values())
+        assignments.append("updated_at = CURRENT_TIMESTAMP")
+        values.append(keep_id)
+        conn.execute(f"UPDATE books SET {', '.join(assignments)} WHERE id = ?", values)
+
+    conn.execute("DELETE FROM source_snapshots WHERE book_id = ?", (drop_id,))
+    conn.execute("DELETE FROM sync_conflicts WHERE book_id = ?", (drop_id,))
+    conn.execute("DELETE FROM duplicate_links WHERE book_id = ?", (drop_id,))
+    conn.execute("DELETE FROM books WHERE id = ?", (drop_id,))

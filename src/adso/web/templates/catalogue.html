@@ -9,11 +9,20 @@
     placeholder="Search title, author, ISBN, notes…"
     autofocus
     class="input min-w-[16rem] flex-1">
-  <input type="text" name="status" value="{{ status }}" placeholder="Status" class="input w-32">
-  <input type="text" name="author" value="{{ author }}" placeholder="Author" class="input w-36">
-  <input type="text" name="location" value="{{ location }}" placeholder="Location" class="input w-36">
+  <select name="status" onchange="this.form.submit()" class="input w-40">
+    <option value="">All statuses</option>
+    {% for s in statuses %}
+    <option value="{{ s }}" {{ "selected" if s == status }}>{{ s }}</option>
+    {% endfor %}
+  </select>
+  <select name="location" onchange="this.form.submit()" class="input w-40">
+    <option value="">All locations</option>
+    {% for loc in locations %}
+    <option value="{{ loc }}" {{ "selected" if loc == location }}>{{ loc }}</option>
+    {% endfor %}
+  </select>
   <button type="submit" class="btn">Search</button>
-  {% if q or status or author or location %}
+  {% if q or status or location %}
   <a href="/" class="btn-outline">Clear</a>
   {% endif %}
 </form>

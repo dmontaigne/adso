@@ -1,0 +1,70 @@
+{# A suspected-duplicate group: pick which record to keep, then merge or dismiss. #}
+<div id="dup-group-{{ group.slug }}" class="card">
+  <header class="border-b pb-4">
+    <h2 class="font-medium">{{ group.title }}</h2>
+    <p class="text-sm text-muted-foreground">
+      {{ group.author or "Unknown author" }} · {{ group.count }} records — choose the one to keep.
+    </p>
+  </header>
+
+  <form
+    class="mt-4"
+    hx-post="/duplicates/merge"
+    hx-target="#dup-group-{{ group.slug }}"
+    hx-swap="outerHTML">
+    <input type="hidden" name="group_key" value="{{ group.group_key }}">
+
+    <div class="grid gap-3 sm:grid-cols-2">
+      {% for book in group.books %}
+      <label class="flex cursor-pointer gap-3 rounded-lg border p-3 has-[:checked]:border-foreground has-[:checked]:bg-muted/40">
+        <input
+          type="radio"
+          name="keep_id"
+          value="{{ book.id }}"
+          class="mt-1"
+          {{ "checked" if book.id == group.suggested_keeper_id }}>
+        {% if book.cover_url %}
+        <img src="{{ book.cover_url }}" loading="lazy" alt="" class="h-16 w-11 shrink-0 rounded bg-muted object-cover">
+        {% endif %}
+        <div class="min-w-0">
+          <div class="flex flex-wrap items-center gap-2">
+            {% if book.reading_status %}
+            <span class="badge-secondary">{{ book.reading_status }}</span>
+            {% endif %}
+            {% if book.id == group.suggested_keeper_id %}
+            <span class="badge-outline">newest import</span>
+            {% endif %}
+          </div>
+          <p class="mt-1 line-clamp-2 text-sm font-medium">{{ book.title }}</p>
+          <p class="text-xs text-muted-foreground">Goodreads ID {{ book.goodreads_id or "—" }}</p>
+          {% if book.location or book.owned or book.local_notes %}
+          <p class="mt-1 text-xs text-muted-foreground">
+            Local:
+            {% if book.owned %}owned{% endif %}
+            {% if book.location %}· {{ book.location }}{% endif %}
+            {% if book.local_notes %}· note{% endif %}
+          </p>
+          {% endif %}
+        </div>
+      </label>
+      {% endfor %}
+    </div>
+
+    <p class="mt-3 text-xs text-muted-foreground">
+      Local data (owned, location, notes) from the other records is folded into the one you keep.
+    </p>
+
+    <div class="mt-3 flex gap-2">
+      <button type="submit" class="btn-sm">Merge into selected</button>
+      <button
+        type="button"
+        class="btn-sm-outline"
+        hx-post="/duplicates/dismiss"
+        hx-vals='{"group_key": "{{ group.group_key }}"}'
+        hx-target="#dup-group-{{ group.slug }}"
+        hx-swap="outerHTML">
+        Not duplicates
+      </button>
+    </div>
+  </form>
+</div>
