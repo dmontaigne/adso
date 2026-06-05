@@ -1,22 +1,33 @@
+<p align="center">
+  <img src="assets/adso-logo.png" alt="Adso logo — a monk reading a book titled ADSO" width="200">
+</p>
+
 # Adso
+
+<p align="center">
+  <a href="https://github.com/dmontaigne/adso/actions/workflows/ci.yml"><img src="https://github.com/dmontaigne/adso/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/python-3.9%2B-blue.svg" alt="Python 3.9+">
+</p>
 
 > **Goodreads is where your friends are. Adso is where your library lives.**
 
 **Adso is a home for your library** — a sovereign, local-first copy you own, fed from Goodreads, that outlives any single app or service. Stay on Goodreads for the network; keep an easily-synced copy in Adso that is yours, does more than Goodreads' roadmap offers, and happens to also be a backup.
 
-Adso is a local-first Goodreads backup and personal library catalogue. It treats Goodreads, Notion, and future services as sync surfaces or inbound feeds, while your own local catalogue remains the source of truth.
+Under the hood, Adso treats Goodreads, Notion, and future services as sync surfaces or inbound feeds, while your own local catalogue stays the source of truth.
 
 The first version is CLI-first and SQLite-backed so the core can later power a local web app, desktop app, add-ons, or agent workflows without rewriting the sync model.
 
 ## Quick Start
 
 ```bash
+git clone https://github.com/dmontaigne/adso.git
+cd adso
 python3 -m venv .venv
 . .venv/bin/activate
-pip install -e .
+pip install .
 adso init
 adso import goodreads goodreads_library_export.csv
-adso sync goodreads goodreads_library_export.csv
 adso report summary
 adso report conflicts
 adso export json --output exports/catalogue.json
@@ -43,10 +54,10 @@ dependencies via extras (these pull modern FastAPI/requests and need
 **Python 3.10+**):
 
 ```bash
-pip install -e .              # core CLI only
-pip install -e ".[web]"       # + local web UI (adso serve)
-pip install -e ".[notion]"    # + Notion export adapter
-pip install -e ".[web,notion]"
+pip install .              # core CLI only
+pip install ".[web]"       # + local web UI (adso serve)
+pip install ".[notion]"    # + Notion export adapter
+pip install ".[web,notion]"
 ```
 
 ### Reproducible install
@@ -58,7 +69,7 @@ install from the committed lockfile before installing Adso itself:
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements-lock.txt
-pip install -e ".[web,notion]"
+pip install ".[web,notion]"
 ```
 
 The pinned versions in [requirements-lock.txt](requirements-lock.txt) are what the
@@ -122,7 +133,7 @@ optional local web UI exists over the same SQLite catalogue, but it is an early
 preview and not part of the v1 surface. If you're curious, it installs via an extra:
 
 ```bash
-pip install -e ".[web]"
+pip install ".[web]"
 adso serve            # opens http://127.0.0.1:8000 — preview, expect rough edges
 ```
 
@@ -137,7 +148,7 @@ Adso can fetch cover art for your catalogue and store the images locally, beside
 Install the optional dependency and fetch covers:
 
 ```bash
-pip install -e ".[covers]"
+pip install ".[covers]"
 adso fetch-covers                 # fetch covers for books that don't have one yet
 adso fetch-covers --limit 10 --dry-run   # preview without writing files
 adso fetch-covers --retry-missing # re-attempt books previously not found
@@ -149,7 +160,7 @@ For each book, Adso resolves a cover in order and keeps the first hit:
 2. **Open Library Search** by title + author
 3. **Apple Books (iTunes Search)** by title + author
 
-All three are free public APIs that need no account or key. Adso is polite to them (spaced requests, backed-off retries) and remembers results, so re-running only fills gaps. Books with no cover from any source show a generated placeholder tile (the title's initials) in the web UI.
+All three are free public APIs that need no account or key. Adso is polite to them (spaced requests, backed-off retries) and remembers results, so re-running only fills gaps.
 
 Set a cover by hand for any book — automatic fetches never overwrite a manual cover:
 
@@ -165,7 +176,7 @@ Covers are also fetched automatically after `adso import`/`sync` goodreads; pass
 Install the optional Notion dependencies:
 
 ```bash
-pip install -e ".[notion]"
+pip install ".[notion]"
 ```
 
 Set these environment variables before using Notion export:
@@ -226,7 +237,7 @@ Troubleshooting:
 
 - Missing credentials: set `NOTION_API_KEY` and `NOTION_DB_ID` in the shell where
   you run Adso.
-- Missing optional dependency: install with `pip install -e ".[notion]"`.
+- Missing optional dependency: install with `pip install ".[notion]"`.
 - Missing Notion properties: add the property named in the Notion API error, then
   retry with `--limit 1`.
 - API rate limits: Adso backs off for Notion `429` responses. If a large export is
