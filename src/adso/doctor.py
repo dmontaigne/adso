@@ -26,6 +26,7 @@ def doctor_report(
     *,
     root: str | Path | None = None,
     env: Mapping[str, str] | None = None,
+    config: "object | None" = None,
 ) -> str:
     db_path = Path(db_path)
     root_path = Path(root) if root is not None else Path.cwd()
@@ -33,18 +34,22 @@ def doctor_report(
 
     db_state = _inspect_database(db_path)
     csv_files = _find_goodreads_csvs(root_path)
-    notion_configured = bool(env.get("NOTION_API_KEY")) and bool(env.get("NOTION_DB_ID"))
+    if config is not None:
+        notion_configured = bool(config.notion_api_key) and bool(config.notion_database_id)
+    else:
+        notion_configured = bool(env.get("NOTION_API_KEY")) and bool(env.get("NOTION_DB_ID"))
 
-    lines = [
-        "Adso Doctor",
-        "===========",
-        "",
-        "Catalogue",
-        "---------",
-        f"Database path: {db_path}",
-        f"Database file: {_status_text(db_state['exists'])}",
-        f"Initialized: {_status_text(db_state['initialized'])}",
-    ]
+    lines = ["Adso Doctor", "===========", ""]
+    lines.extend(_configuration_section(config))
+    lines.extend(
+        [
+            "Catalogue",
+            "---------",
+            f"Database path: {db_path}",
+            f"Database file: {_status_text(db_state['exists'])}",
+            f"Initialized: {_status_text(db_state['initialized'])}",
+        ]
+    )
 
     if db_state["error"]:
         lines.append(f"Database note: {db_state['error']}")
@@ -81,6 +86,31 @@ def doctor_report(
     lines.extend(["", "Suggested Next Commands", "-----------------------"])
     lines.extend(_suggested_commands(db_state, csv_files, notion_configured))
     return "\n".join(lines)
+
+
+def _configuration_section(config: "object | None") -> list[str]:
+    """Render the Configuration block. Tolerates config=None (older callers)."""
+    from . import config as config_module
+
+    user_path = config_module.user_config_path()
+    project_path = config_module.project_config_path()
+    files = [
+        f"{label}: {path} ({'found' if path.exists() else 'not present'})"
+        for label, path in (("project", project_path), ("user", user_path))
+    ]
+
+    if config is not None and getattr(config, "profile", None):
+        profile_line = f"Active profile: {config.profile}"
+    else:
+        profile_line = "Active profile: none (using built-in defaults)"
+
+    target = getattr(config, "notion_target", None) if config is not None else None
+    target_line = f"Notion target: {target}" if target else "Notion target: (unnamed)"
+
+    lines = ["Configuration", "-------------", profile_line, target_line]
+    lines.extend(f"Config {entry}" for entry in files)
+    lines.append("")
+    return lines
 
 
 def _inspect_database(db_path: Path) -> dict[str, object]:

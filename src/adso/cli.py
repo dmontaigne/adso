@@ -5,10 +5,12 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from . import config as config_module
 from . import conflicts as conflicts_service
 from . import db
 from . import dedupe as dedupe_service
 from .catalogue import BookFilters, get_book, list_books, search_books
+from .config import DEFAULT_DB, ResolvedConfig
 from .covers import CoversError, fetch_covers, set_manual_cover
 from .doctor import doctor_report
 from .exports import export_csv, export_json
@@ -22,30 +24,32 @@ from .reports import (
 from .sync import import_goodreads_csv
 
 
-DEFAULT_DB = "adso.sqlite"
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
+    if args.command == "config":
+        return _run_config(args, parser)
+
+    cfg = config_module.load(db_arg=args.db, profile_arg=args.profile)
+
     if args.command == "doctor":
-        print(doctor_report(args.db))
+        print(doctor_report(cfg.db_path, config=cfg))
         return 0
 
     if args.command == "serve":
         return _run_server(
-            args.db,
+            cfg.db_path,
             host=args.host,
             port=args.port,
             open_browser=not args.no_browser,
         )
 
-    conn = db.connect(args.db)
+    conn = db.connect(cfg.db_path)
     try:
         if args.command == "init":
             db.initialize(conn)
-            print(f"Initialized Adso catalogue at {args.db}")
+            print(f"Initialized Adso catalogue at {cfg.db_path}")
             return 0
 
         db.initialize(conn)
@@ -71,7 +75,7 @@ def main(argv: list[str] | None = None) -> int:
             summary = import_goodreads_csv(conn, args.csv, mode="import")
             print(latest_sync_summary_markdown(conn))
             if not args.no_covers:
-                _auto_fetch_covers(conn, args.db)
+                _auto_fetch_covers(conn, cfg.db_path)
             return 0
 
         if args.command == "sync" and args.source == "goodreads":
@@ -82,13 +86,13 @@ def main(argv: list[str] | None = None) -> int:
                 write_latest_conflicts(conn, output)
                 print(f"Conflict report: {output}")
             if not args.no_covers:
-                _auto_fetch_covers(conn, args.db)
+                _auto_fetch_covers(conn, cfg.db_path)
             return 0
 
         if args.command == "fetch-covers":
             result = fetch_covers(
                 conn,
-                _data_dir(args.db),
+                _data_dir(cfg.db_path),
                 limit=args.limit,
                 refresh=args.refresh,
                 retry_missing=args.retry_missing,
@@ -100,7 +104,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "set-cover":
             try:
                 outcome = set_manual_cover(
-                    conn, _data_dir(args.db), args.goodreads_id, url=args.url, file=args.file
+                    conn, _data_dir(cfg.db_path), args.goodreads_id, url=args.url, file=args.file
                 )
             except CoversError as exc:
                 parser.error(str(exc))
@@ -170,8 +174,15 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "export" and args.target == "notion":
+            print(_notion_target_banner(cfg))
             try:
-                result = export_to_notion(conn, dry_run=args.dry_run, limit=args.limit)
+                result = export_to_notion(
+                    conn,
+                    api_key=cfg.notion_api_key,
+                    database_id=cfg.notion_database_id,
+                    dry_run=args.dry_run,
+                    limit=args.limit,
+                )
             except NotionConfigError as exc:
                 parser.error(str(exc))
             print(_format_notion_export_result(result, dry_run=args.dry_run))
@@ -215,11 +226,22 @@ def _run_server(db_path: str, *, host: str, port: int, open_browser: bool) -> in
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Adso local-first book catalogue")
-    parser.add_argument("--db", default=DEFAULT_DB, help=f"SQLite database path (default: {DEFAULT_DB})")
+    parser.add_argument(
+        "--db",
+        default=None,
+        help=f"SQLite database path (overrides the active profile; default: {DEFAULT_DB})",
+    )
+    parser.add_argument(
+        "--profile",
+        default=None,
+        help="Configuration profile to use (see `adso config`)",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("init", help="Initialize the local catalogue database")
     subparsers.add_parser("doctor", help="Check local Adso setup and suggest next commands")
+
+    _add_config_parser(subparsers)
 
     serve_parser = subparsers.add_parser("serve", help="Run the local web UI")
     serve_parser.add_argument("--host", default="127.0.0.1", help="Host to bind (default: 127.0.0.1)")
@@ -324,6 +346,119 @@ def _build_parser() -> argparse.ArgumentParser:
     notion_export.add_argument("--limit", type=int, help="Maximum number of books to export")
 
     return parser
+
+
+def _add_config_parser(subparsers) -> None:
+    config_parser = subparsers.add_parser(
+        "config", help="Manage configuration profiles (database path, Notion target)"
+    )
+    config_sub = config_parser.add_subparsers(dest="config_command", required=True)
+
+    config_sub.add_parser("path", help="Show which config files are in effect")
+    config_sub.add_parser("list", help="List profiles and the active one")
+
+    show_parser = config_sub.add_parser("show", help="Show resolved settings for a profile")
+    show_parser.add_argument("profile", nargs="?", help="Profile name (default: active profile)")
+
+    set_parser = config_sub.add_parser("set", help="Set a profile setting")
+    set_parser.add_argument("profile", help="Profile name")
+    set_parser.add_argument(
+        "key",
+        help="Setting to change: " + ", ".join(sorted(config_module.PROFILE_KEYS)),
+    )
+    set_parser.add_argument("value", help="New value")
+    set_parser.add_argument(
+        "--local", action="store_true", help="Write to ./adso.ini instead of the user config"
+    )
+
+    use_parser = config_sub.add_parser("use", help="Set the default profile")
+    use_parser.add_argument("profile", help="Profile name to make default")
+    use_parser.add_argument(
+        "--local", action="store_true", help="Write to ./adso.ini instead of the user config"
+    )
+
+    init_parser = config_sub.add_parser("init", help="Write a starter config file")
+    init_parser.add_argument(
+        "--local", action="store_true", help="Write ./adso.ini instead of the user config"
+    )
+
+
+def _run_config(args, parser) -> int:
+    command = args.config_command
+
+    if command == "path":
+        user = config_module.user_config_path()
+        project = config_module.project_config_path()
+        lines = ["Config files (project-local overrides user-level):"]
+        for label, path in (("project", project), ("user", user)):
+            mark = "exists" if path.exists() else "not present"
+            lines.append(f"- {label}: {path} ({mark})")
+        print("\n".join(lines))
+        return 0
+
+    if command == "list":
+        profiles = config_module.list_profiles()
+        active = config_module.default_profile()
+        if not profiles:
+            print("No profiles defined yet. Create one with `adso config init`.")
+            return 0
+        lines = ["Profiles:"]
+        for name in profiles:
+            marker = " (default)" if name == active else ""
+            lines.append(f"- {name}{marker}")
+        print("\n".join(lines))
+        return 0
+
+    if command == "show":
+        profile = args.profile or config_module.default_profile()
+        if not profile:
+            parser.error("No profile given and no default profile set.")
+        settings = config_module.profile_settings(profile)
+        if not settings:
+            parser.error(f"No profile named '{profile}'. See `adso config list`.")
+        lines = [f"Profile '{profile}':"]
+        for key in ("db", "notion_database_id", "notion_target", "notion_api_key"):
+            if key not in settings:
+                continue
+            value = settings[key]
+            if key in config_module.SECRET_KEYS:
+                value = config_module.mask_secret(value)
+            lines.append(f"  {key} = {value}")
+        print("\n".join(lines))
+        return 0
+
+    if command == "set":
+        try:
+            path = config_module.set_value(
+                args.profile, args.key, args.value, local=args.local
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
+        print(f"Set {args.key} for profile '{args.profile}' in {path}")
+        return 0
+
+    if command == "use":
+        path = config_module.set_default_profile(args.profile, local=args.local)
+        print(f"Default profile set to '{args.profile}' in {path}")
+        return 0
+
+    if command == "init":
+        path, created = config_module.init_config(local=args.local)
+        if created:
+            print(f"Wrote starter config to {path}")
+        else:
+            print(f"Config already exists at {path} (left unchanged)")
+        return 0
+
+    parser.error("Unsupported config command.")
+    return 2
+
+
+def _notion_target_banner(cfg: ResolvedConfig) -> str:
+    profile = cfg.profile or "(none)"
+    target = cfg.notion_target or "(unnamed)"
+    db_id = cfg.notion_database_id or "(unset)"
+    return f"Notion target → profile: {profile}, target: {target}, database: {db_id}"
 
 
 def _data_dir(db_path: str) -> Path:
