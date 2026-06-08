@@ -224,14 +224,17 @@ def create_app(db_path: str | Path) -> FastAPI:
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> HTMLResponse:
         groups = conflicts_service.list_open_conflicts(conn)
+        decided = conflicts_service.list_decided_conflicts(conn)
         total = sum(len(group["conflicts"]) for group in groups)
         return templates.TemplateResponse(
             request,
             "conflicts.html",
             {
                 "groups": groups,
+                "decided": decided,
                 "total": total,
-                "pending_count": total,
+                "pending_count": conflicts_service.pending_count(conn),
+                "deferred_count": conflicts_service.deferred_count(conn),
                 "duplicate_count": dedupe_service.pending_count(conn),
             },
         )
@@ -246,14 +249,26 @@ def create_app(db_path: str | Path) -> FastAPI:
     ) -> HTMLResponse:
         try:
             outcome = conflicts_service.resolve_conflict(
-                conn, conflict_id, choice=choice, custom_value=value
+                conn, conflict_id, choice=choice, custom_value=value, actor="web"
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
+        # Reopening returns the field to its editable state in place; every other
+        # decision collapses it to the decided summary.
+        if choice == "reopen":
+            return templates.TemplateResponse(
+                request,
+                "_conflict_field.html",
+                {
+                    "c": conflicts_service.conflict_field_view(conn, conflict_id),
+                    "swap": True,
+                    "pending_count": conflicts_service.pending_count(conn),
+                },
+            )
         return templates.TemplateResponse(
             request,
             "_conflict_field_resolved.html",
-            {"pending_count": conflicts_service.pending_count(conn), **outcome},
+            {"swap": True, "pending_count": conflicts_service.pending_count(conn), **outcome},
         )
 
     @app.post("/conflicts/book/{book_id}/resolve", response_class=HTMLResponse)
@@ -264,7 +279,7 @@ def create_app(db_path: str | Path) -> FastAPI:
         choice: str = Form(...),
     ) -> HTMLResponse:
         try:
-            outcome = conflicts_service.resolve_book(conn, book_id, choice=choice)
+            outcome = conflicts_service.resolve_book(conn, book_id, choice=choice, actor="web")
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         return templates.TemplateResponse(

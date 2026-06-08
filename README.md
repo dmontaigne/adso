@@ -75,8 +75,8 @@ adso list --owned true --location Office   # browse, with filters
 adso search "winter society" --limit 10
 adso show GOODREADS_ID
 adso edit GOODREADS_ID --owned true --location Office --shelf-box A1
-adso conflicts                             # list pending conflicts
-adso resolve CONFLICT_ID --accept-incoming
+adso conflicts                             # list open conflicts (--all shows decided ones too)
+adso resolve CONFLICT_ID --accept-incoming # or --keep-local / --set / --ignore / --review-later / --reopen
 adso report summary --output reports/summary.md
 adso export csv  --output exports/catalogue.csv
 adso export json --output exports/catalogue.json
