@@ -345,7 +345,13 @@ class AdsoCoreTests(unittest.TestCase):
 
         data = json.loads(json_path.read_text(encoding="utf-8"))
         self.assertEqual(data[0]["title"], "The Name of the Rose")
-        self.assertIn("goodreads_id,title,author", csv_export_path.read_text(encoding="utf-8"))
+        self.assertEqual(data[0]["publisher"], "Harvest Books")
+        csv_text = csv_export_path.read_text(encoding="utf-8")
+        self.assertIn("goodreads_id,title,author", csv_text)
+        # Bibliographic fields are normalized + synced, so they must be exportable too.
+        self.assertIn("publisher", csv_text)
+        self.assertIn("Harvest Books", csv_text)
+        self.assertIn("original_publication_year", csv_text)
 
     def test_notion_dry_run_reports_create_update_without_writes(self) -> None:
         csv_path = self.root / "goodreads.csv"
@@ -784,6 +790,10 @@ class AdsoCoreTests(unittest.TestCase):
         self.assertIn("Local Catalogue Fields", output)
         self.assertIn("Title: The Name of the Rose", output)
         self.assertIn("Rating: 5", output)
+        self.assertIn("Publisher: Harvest Books", output)
+        self.assertIn("Binding: Paperback", output)
+        self.assertIn("Number of Pages: 536", output)
+        self.assertIn("Original Publication Year: 1980", output)
         self.assertIn("Owned: yes", output)
         self.assertIn("Shelf/Box: A1", output)
         with self.assertRaises(SystemExit) as raised:
