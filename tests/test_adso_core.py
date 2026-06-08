@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import sqlite3
 import sys
 import tempfile
@@ -799,6 +800,36 @@ class AdsoCoreTests(unittest.TestCase):
         with self.assertRaises(SystemExit) as raised:
             _run_cli(["--db", str(db_path), "show", "missing"])
         self.assertEqual(raised.exception.code, 2)
+
+    def test_cli_import_surfaces_conflicts_like_sync(self) -> None:
+        # `import` and `sync` are the same operation; both must write a conflict
+        # report when conflicts arise. Previously `import` recorded conflicts in
+        # the database but wrote no report, so they passed silently (DAV-144).
+        db_path = self.root / "cli-import.sqlite"
+        csv_path = self.root / "goodreads.csv"
+        write_goodreads_csv(csv_path, [row()])
+        _run_cli(["--db", str(db_path), "import", "goodreads", str(csv_path), "--no-covers"])
+
+        # Diverge a tracked field locally, then re-run `import` with a moved shelf.
+        conn = db.connect(db_path)
+        conn.execute("UPDATE books SET reading_status = ? WHERE goodreads_id = ?", ("Local Status", "1"))
+        conn.commit()
+        conn.close()
+
+        changed = self.root / "goodreads-changed.csv"
+        write_goodreads_csv(changed, [row(**{"Exclusive Shelf": "read", "Bookshelves": "read"})])
+
+        # The conflict report path is resolved relative to the working directory.
+        cwd = os.getcwd()
+        os.chdir(self.root)
+        try:
+            output = _run_cli(["--db", str(db_path), "import", "goodreads", str(changed), "--no-covers"])
+        finally:
+            os.chdir(cwd)
+
+        self.assertIn("Conflict report:", output)
+        report = next((self.root / "reports").glob("conflicts-import-*.md"))
+        self.assertIn("reading_status", report.read_text(encoding="utf-8"))
 
     def test_cli_doctor_reports_without_initializing_database(self) -> None:
         db_path = self.root / "cli-doctor.sqlite"
