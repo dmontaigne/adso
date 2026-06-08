@@ -801,6 +801,53 @@ class AdsoCoreTests(unittest.TestCase):
             _run_cli(["--db", str(db_path), "show", "missing"])
         self.assertEqual(raised.exception.code, 2)
 
+    def test_cli_conflict_decisions_and_report_status(self) -> None:
+        # Force a reading_status conflict (base To Read, local Currently Reading,
+        # incoming Read), then drive it through the new decision flags.
+        db_path = self.root / "cli-decide.sqlite"
+        first = self.root / "first.csv"
+        write_goodreads_csv(first, [row(**{"Exclusive Shelf": "to-read", "Bookshelves": "to-read"})])
+        _run_cli(["--db", str(db_path), "import", "goodreads", str(first), "--no-covers"])
+        conn = db.connect(db_path)
+        conn.execute("UPDATE books SET reading_status = 'Currently Reading' WHERE goodreads_id = '1'")
+        conn.commit()
+        conn.close()
+        second = self.root / "second.csv"
+        write_goodreads_csv(second, [row(**{"Exclusive Shelf": "read", "Bookshelves": "read"})])
+        # `import` now writes a conflict report relative to the working directory,
+        # so run it from the temp root to avoid leaving a stray reports/ file.
+        cwd = os.getcwd()
+        os.chdir(self.root)
+        try:
+            _run_cli(["--db", str(db_path), "import", "goodreads", str(second), "--no-covers"])
+        finally:
+            os.chdir(cwd)
+
+        conn = db.connect(db_path)
+        cid = conn.execute(
+            "SELECT id FROM sync_conflicts WHERE field_name = 'reading_status'"
+        ).fetchone()[0]
+        conn.close()
+
+        self.assertIn(
+            "marked for later review",
+            _run_cli(["--db", str(db_path), "resolve", str(cid), "--review-later"]),
+        )
+        self.assertIn("[deferred]", _run_cli(["--db", str(db_path), "conflicts"]))
+        _run_cli(["--db", str(db_path), "resolve", str(cid), "--reopen"])
+        self.assertIn(
+            "accepted Goodreads value",
+            _run_cli(["--db", str(db_path), "resolve", str(cid), "--accept-incoming"]),
+        )
+
+        all_listed = _run_cli(["--db", str(db_path), "conflicts", "--all"])
+        self.assertIn("Decided conflicts", all_listed)
+        self.assertIn("via cli", all_listed)
+
+        report = _run_cli(["--db", str(db_path), "report", "conflicts"])
+        self.assertIn("Status: Resolved", report)
+        self.assertIn("Decision:", report)
+
     def test_cli_import_surfaces_conflicts_like_sync(self) -> None:
         # `import` and `sync` are the same operation; both must write a conflict
         # report when conflicts arise. Previously `import` recorded conflicts in

@@ -28,6 +28,14 @@
         hx-swap="outerHTML">
         Use all Goodreads values
       </button>
+      <button
+        class="btn-sm-ghost"
+        hx-post="/conflicts/book/{{ group.book_id }}/resolve"
+        hx-vals='{"choice": "ignore"}'
+        hx-target="#conflict-group-{{ group.book_id }}"
+        hx-swap="outerHTML">
+        Ignore all
+      </button>
     </div>
   </header>
   <section class="flex flex-col gap-3">

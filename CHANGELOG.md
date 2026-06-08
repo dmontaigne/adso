@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Conflict decisions now support **ignore** and **review-later** alongside
+  keep-local / accept-incoming / custom, and any decision can be **reopened**.
+- Every decision is recorded in an append-only audit trail with provenance
+  (which interface decided), surfaced in `adso conflicts --all`, the conflict
+  report, and the web UI's "Recently decided" section.
+- `adso resolve` gains `--ignore`, `--review-later`, and `--reopen`.
 - `show` and the CSV/JSON exports now surface the publisher, binding, page count,
   and publication years that were already imported and synced.
 
