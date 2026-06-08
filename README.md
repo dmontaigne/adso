@@ -5,7 +5,7 @@
 # Adso
 
 <p align="left">
-  <a href="https://github.com/dmontaigne/adso/actions/workflows/ci.yml"><img src="https://github.com/dmontaigne/adso/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/davidwhipps/adso/actions/workflows/ci.yml"><img src="https://github.com/davidwhipps/adso/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/python-3.9%2B-blue.svg" alt="Python 3.9+">
 </p>
@@ -23,7 +23,7 @@ v1 is CLI-first and SQLite-backed. Because every interface is just an adapter ov
 ## Quick Start
 
 ```bash
-git clone https://github.com/dmontaigne/adso.git
+git clone https://github.com/davidwhipps/adso.git
 cd adso
 python3 -m venv .venv
 . .venv/bin/activate

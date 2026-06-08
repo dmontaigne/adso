@@ -56,5 +56,5 @@ run it against your own Goodreads export.
   PEP 517 build backend in `pyproject.toml`, and a pinned `requirements-lock.txt`
   for reproducible installs.
 
-[Unreleased]: https://github.com/dmontaigne/adso/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/dmontaigne/adso/releases/tag/v0.1.0
+[Unreleased]: https://github.com/davidwhipps/adso/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/davidwhipps/adso/releases/tag/v0.1.0

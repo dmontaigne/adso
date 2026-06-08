@@ -13,16 +13,16 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/dmontaigne/adso.git"
+    "url": "git+https://github.com/davidwhipps/adso.git"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "bugs": {
-    "url": "https://github.com/dmontaigne/adso/issues"
+    "url": "https://github.com/davidwhipps/adso/issues"
   },
-  "homepage": "https://github.com/dmontaigne/adso#readme",
+  "homepage": "https://github.com/davidwhipps/adso#readme",
   "devDependencies": {
     "@tailwindcss/cli": "^4.3.0",
     "basecoat-css": "^0.3.11",
