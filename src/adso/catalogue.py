@@ -23,24 +23,9 @@ class BookFilters:
     limit: int | None = None
 
 
-SEARCH_FIELDS = (
-    "title",
-    "author",
-    "additional_authors",
-    "isbn10",
-    "isbn13",
-    "publisher",
-    "binding",
-    "reading_status",
-    "exclusive_shelf",
-    "shelves_json",
-    "my_review",
-    "private_notes",
-    "location",
-    "shelf_box",
-    "loaned_to",
-    "local_notes",
-)
+# The set of columns search covers is defined once in db.SEARCH_FIELDS, shared
+# with the persistent FTS5 index so both search paths stay in lockstep.
+SEARCH_FIELDS = db.SEARCH_FIELDS
 
 
 def list_books(conn: sqlite3.Connection, filters: BookFilters | None = None) -> list[dict[str, Any]]:
@@ -69,7 +54,7 @@ def search_books(
         return list_books(conn, filters)
 
     filters = filters or BookFilters()
-    if _sqlite_supports_fts5(conn):
+    if _fts_index_available(conn):
         return _search_books_fts(conn, query, filters)
 
     where, params = _filter_sql(filters)
@@ -126,21 +111,20 @@ def _search_books_fts(
     if not fts_query:
         return list_books(conn, filters)
 
-    _ensure_search_fts(conn)
     where, params = _filter_sql(filters, table_prefix="books")
     if where:
-        combined_where = f"{where} AND adso_books_fts MATCH ?"
+        combined_where = f"{where} AND books_fts MATCH ?"
     else:
-        combined_where = "WHERE adso_books_fts MATCH ?"
+        combined_where = "WHERE books_fts MATCH ?"
     limit_sql = _limit_sql(filters)
 
     rows = conn.execute(
         f"""
         SELECT books.*
         FROM books
-        JOIN temp.adso_books_fts ON adso_books_fts.rowid = books.id
+        JOIN books_fts ON books_fts.rowid = books.id
         {combined_where}
-        ORDER BY bm25(adso_books_fts), books.title COLLATE NOCASE, books.author COLLATE NOCASE
+        ORDER BY bm25(books_fts), books.title COLLATE NOCASE, books.author COLLATE NOCASE
         {limit_sql}
         """,
         [*params, fts_query],
@@ -148,24 +132,18 @@ def _search_books_fts(
     return [_book_result(row) for row in rows]
 
 
-def _sqlite_supports_fts5(conn: sqlite3.Connection) -> bool:
-    try:
-        conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS temp.adso_fts_probe USING fts5(value)")
-        return True
-    except sqlite3.OperationalError:
-        return False
+def _fts_index_available(conn: sqlite3.Connection) -> bool:
+    """Whether the persistent FTS5 index exists (built by db._migrate_search_fts).
 
-
-def _ensure_search_fts(conn: sqlite3.Connection) -> None:
-    fields_sql = ", ".join(SEARCH_FIELDS)
-    conn.execute(f"CREATE VIRTUAL TABLE IF NOT EXISTS temp.adso_books_fts USING fts5({fields_sql})")
-    conn.execute("DELETE FROM temp.adso_books_fts")
-    conn.execute(
-        f"""
-        INSERT INTO temp.adso_books_fts (rowid, {fields_sql})
-        SELECT id, {", ".join(f"COALESCE({field}, '')" for field in SEARCH_FIELDS)}
-        FROM books
-        """
+    Its presence is the real signal that FTS search is usable: the index is only
+    created when this SQLite build supports FTS5 and the schema is complete, so a
+    missing table means we must fall back to LIKE search.
+    """
+    return (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='books_fts'"
+        ).fetchone()
+        is not None
     )
 
 

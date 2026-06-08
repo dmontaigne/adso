@@ -633,7 +633,7 @@ class AdsoCoreTests(unittest.TestCase):
         self.assertIsNone(missing)
 
     def test_search_uses_fts5_when_available(self) -> None:
-        with patch("adso.catalogue._sqlite_supports_fts5", return_value=True), patch(
+        with patch("adso.catalogue._fts_index_available", return_value=True), patch(
             "adso.catalogue._search_books_fts", return_value=[{"goodreads_id": "fts"}]
         ) as fts_search:
             results = search_books(self.conn, "winter", BookFilters(owned=True))
@@ -663,6 +663,40 @@ class AdsoCoreTests(unittest.TestCase):
             [result["goodreads_id"] for result in search_books(self.conn, "winter society")],
             ["2"],
         )
+
+    def test_search_index_is_persistent_and_trigger_maintained(self) -> None:
+        # DAV-146: a persistent FTS5 index kept current by triggers replaces the
+        # per-query temp rebuild. Prove it exists and tracks insert/update/delete.
+        csv_path = self.root / "goodreads.csv"
+        write_goodreads_csv(
+            csv_path,
+            [
+                row(),
+                row(**{"Book Id": "2", "Title": "The Left Hand of Darkness",
+                       "Author": "Ursula K. Le Guin"}),
+            ],
+        )
+        import_goodreads_csv(self.conn, csv_path, mode="import")
+
+        # Persistent (not a temp table): present in sqlite_master as a real table.
+        self.assertIsNotNone(
+            self.conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='books_fts'"
+            ).fetchone()
+        )
+
+        # INSERT trigger: imported rows are searchable.
+        self.assertEqual([b["goodreads_id"] for b in search_books(self.conn, "Le Guin")], ["2"])
+
+        # UPDATE trigger: a local-field edit is reflected without re-importing.
+        db.update_local_fields(self.conn, "1", {"local_notes": "Signed first edition"})
+        self.assertEqual([b["goodreads_id"] for b in search_books(self.conn, "Signed")], ["1"])
+
+        # DELETE trigger: merging a book out drops it from the index.
+        keep_id = db.get_book_by_goodreads_id(self.conn, "1")["id"]
+        drop_id = db.get_book_by_goodreads_id(self.conn, "2")["id"]
+        db.merge_books(self.conn, keep_id=keep_id, drop_id=drop_id)
+        self.assertEqual(search_books(self.conn, "Le Guin"), [])
 
     def test_cli_list_outputs_readable_rows_and_filters(self) -> None:
         csv_path = self.root / "goodreads.csv"
