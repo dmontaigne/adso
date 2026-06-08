@@ -4,6 +4,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from . import conflicts as conflicts_service
+from . import db
+
+_STATUS_ORDER = ("pending", "review_later", "resolved", "ignored")
+_STATUS_REPORT_LABELS = {
+    "pending": "Pending",
+    "review_later": "Deferred",
+    "resolved": "Resolved",
+    "ignored": "Ignored",
+}
+
 
 def latest_sync_summary_markdown(conn) -> str:
     run = _latest_run(conn)
@@ -51,6 +62,12 @@ def latest_sync_summary_markdown(conn) -> str:
     else:
         lines.append("No conflicts were detected, so no local catalogue decisions need review from this run.")
 
+    deferred = db.deferred_conflict_count(conn)
+    if deferred:
+        lines.append(
+            f"{deferred} conflict{'' if deferred == 1 else 's'} marked for later review still need a decision."
+        )
+
     lines.extend(["", "## Suggested next action", ""])
     lines.extend(_next_actions(run, conflicts))
     lines.append("")
@@ -71,8 +88,11 @@ def latest_conflicts_markdown(conn) -> str:
         f"Source: {run['source']}",
         f"Imported at: {run['imported_at']}",
         f"Conflicts: {len(conflicts)}",
-        "",
     ]
+    breakdown = _status_breakdown(conflicts)
+    if breakdown:
+        lines.append(f"Status: {breakdown}")
+    lines.append("")
 
     if not conflicts:
         lines.append("No pending conflicts for the latest import run.")
@@ -87,6 +107,14 @@ def latest_conflicts_markdown(conn) -> str:
                 f"- Author: {conflict['author'] or 'Unknown'}",
                 f"- Goodreads ID: {conflict['goodreads_id']}",
                 f"- Field: `{conflict['field_name']}`",
+                f"- Status: {_status_label(conflict['status'])}",
+            ]
+        )
+        decision_line = _decision_line(conn, conflict)
+        if decision_line:
+            lines.append(decision_line)
+        lines.extend(
+            [
                 f"- Previous Goodreads value: `{_format_value(conflict['old_source_value'])}`",
                 f"- Local catalogue value: `{_format_value(conflict['local_value'])}`",
                 f"- Incoming Goodreads value: `{_format_value(conflict['incoming_value'])}`",
@@ -145,6 +173,35 @@ def _next_actions(run, conflicts) -> list[str]:
             "- Export a fresh backup if you want a portable snapshot after the safe updates.",
         ]
     return ["- No action needed."]
+
+
+def _status_label(status: str) -> str:
+    return _STATUS_REPORT_LABELS.get(status, status)
+
+
+def _status_breakdown(conflicts) -> str:
+    counts: dict[str, int] = {}
+    for conflict in conflicts:
+        counts[conflict["status"]] = counts.get(conflict["status"], 0) + 1
+    parts = [
+        f"{_STATUS_REPORT_LABELS[status]} {counts[status]}"
+        for status in _STATUS_ORDER
+        if counts.get(status)
+    ]
+    return " · ".join(parts)
+
+
+def _decision_line(conn, conflict) -> str | None:
+    """Show the latest decision (with provenance) for a decided conflict."""
+    if conflict["status"] not in db.DECIDED_CONFLICT_STATUSES:
+        return None
+    decisions = db.list_conflict_decisions(conn, conflict["id"])
+    last = decisions[-1] if decisions else None
+    label = conflicts_service.decision_label(conflict["resolution"] or "")
+    if last is None:
+        return f"- Decision: {label}"
+    when = f" on {last['created_at']}" if last["created_at"] else ""
+    return f"- Decision: {label} (via {last['actor']}{when})"
 
 
 def _recommendation_for_conflict(conflict) -> str:

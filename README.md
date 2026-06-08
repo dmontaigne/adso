@@ -69,20 +69,20 @@ Optional features each add their own extra (these need **Python 3.10+**): `.[cov
 ```bash
 adso init                                  # create the catalogue
 adso doctor                                # check setup, suggest next steps
-adso import goodreads path/to/export.csv   # first import
-adso sync goodreads path/to/export.csv     # later syncs (reports conflicts)
+adso import goodreads path/to/export.csv   # first load (alias of sync)
+adso sync goodreads path/to/export.csv     # later refreshes (same safe operation)
 adso list --owned true --location Office   # browse, with filters
 adso search "winter society" --limit 10
 adso show GOODREADS_ID
 adso edit GOODREADS_ID --owned true --location Office --shelf-box A1
-adso conflicts                             # list pending conflicts
-adso resolve CONFLICT_ID --accept-incoming
+adso conflicts                             # list open conflicts (--all shows decided ones too)
+adso resolve CONFLICT_ID --accept-incoming # or --keep-local / --set / --ignore / --review-later / --reopen
 adso report summary --output reports/summary.md
 adso export csv  --output exports/catalogue.csv
 adso export json --output exports/catalogue.json
 ```
 
-`import` and `sync` both preserve raw import rows. `sync` additionally writes a conflict report whenever a Goodreads update would overwrite one of your local changes.
+`import` and `sync` run the same safe, idempotent operation — the name just reads naturally for the first load versus a later refresh. Both preserve raw import rows and write a conflict report whenever a Goodreads update would overwrite one of your local changes.
 
 ## Book covers
 

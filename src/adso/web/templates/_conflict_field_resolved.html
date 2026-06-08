@@ -1,6 +1,17 @@
-{# Returned after a single field is resolved; replaces the field row. #}
-<div id="conflict-field-{{ id }}" class="rounded-lg border border-dashed bg-muted/30 p-3 text-sm text-muted-foreground">
-  <span class="font-medium text-foreground">{{ field_label }}</span>
-  — {{ resolution_label }}{% if value %}: <span class="font-medium text-foreground">{{ value }}</span>{% endif %}
+{# A decided field. Returned as the swap after a decision, and reused (without
+   the OOB badge) in the "Recently decided" section of the conflicts page. #}
+<div id="conflict-field-{{ id }}" class="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed bg-muted/30 p-3 text-sm text-muted-foreground">
+  <div>
+    <span class="font-medium text-foreground">{{ field_label }}</span>
+    — {{ resolution_label }}{% if value %}: <span class="font-medium text-foreground">{{ value }}</span>{% endif %}{% if actor %} <span class="text-xs">· via {{ actor }}</span>{% endif %}
+  </div>
+  <button
+    class="btn-sm-ghost"
+    hx-post="/conflicts/{{ id }}/resolve"
+    hx-vals='{"choice": "reopen"}'
+    hx-target="#conflict-field-{{ id }}"
+    hx-swap="outerHTML">
+    Reopen
+  </button>
 </div>
-<span id="nav-conflict-badge" hx-swap-oob="true">{% if pending_count %}<span class="badge-destructive">{{ pending_count }}</span>{% endif %}</span>
+{% if swap %}<span id="nav-conflict-badge" hx-swap-oob="true">{% if pending_count %}<span class="badge-destructive">{{ pending_count }}</span>{% endif %}</span>{% endif %}

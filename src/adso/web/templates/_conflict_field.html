@@ -1,7 +1,7 @@
 {# One field's conflict: two explicit choices, each button under its own value. #}
 <div id="conflict-field-{{ c.id }}" class="rounded-lg border p-3" x-data="{ editing: false }">
   <div class="mb-2 flex flex-wrap items-baseline justify-between gap-2">
-    <span class="text-sm font-medium">{{ c.field_label }}</span>
+    <span class="text-sm font-medium">{{ c.field_label }}{% if c.deferred %} <span class="badge-secondary align-middle">deferred</span>{% endif %}</span>
     <span class="text-xs text-muted-foreground">Last synced from Goodreads: {{ c.base or "—" }}</span>
   </div>
 
@@ -35,18 +35,35 @@
     </div>
   </div>
 
-  <div class="mt-2">
+  <div class="mt-2 flex flex-wrap items-center gap-2">
     <button class="btn-sm-ghost" type="button" @click="editing = !editing">Enter a custom value…</button>
-    <form
-      x-show="editing"
-      x-cloak
-      class="mt-2 flex gap-2"
+    <button
+      class="btn-sm-ghost"
       hx-post="/conflicts/{{ c.id }}/resolve"
+      hx-vals='{"choice": "ignore"}'
       hx-target="#conflict-field-{{ c.id }}"
       hx-swap="outerHTML">
-      <input type="hidden" name="choice" value="custom">
-      <input type="text" name="value" class="input flex-1" placeholder="Custom value…" value="{{ c.local }}">
-      <button class="btn-sm" type="submit">Save custom</button>
-    </form>
+      Ignore
+    </button>
+    <button
+      class="btn-sm-ghost"
+      hx-post="/conflicts/{{ c.id }}/resolve"
+      hx-vals='{"choice": "later"}'
+      hx-target="#conflict-field-{{ c.id }}"
+      hx-swap="outerHTML">
+      Review later
+    </button>
   </div>
+  <form
+    x-show="editing"
+    x-cloak
+    class="mt-2 flex gap-2"
+    hx-post="/conflicts/{{ c.id }}/resolve"
+    hx-target="#conflict-field-{{ c.id }}"
+    hx-swap="outerHTML">
+    <input type="hidden" name="choice" value="custom">
+    <input type="text" name="value" class="input flex-1" placeholder="Custom value…" value="{{ c.local }}">
+    <button class="btn-sm" type="submit">Save custom</button>
+  </form>
 </div>
+{% if swap %}<span id="nav-conflict-badge" hx-swap-oob="true">{% if pending_count %}<span class="badge-destructive">{{ pending_count }}</span>{% endif %}</span>{% endif %}

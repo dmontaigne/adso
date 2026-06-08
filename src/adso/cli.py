@@ -102,15 +102,12 @@ def _dispatch(args, parser) -> int:
             print(_format_book_detail(book))
             return 0
 
-        if args.command == "import" and args.source == "goodreads":
-            summary = import_goodreads_csv(conn, args.csv, mode="import")
-            print(latest_sync_summary_markdown(conn))
-            if not args.no_covers:
-                _auto_fetch_covers(conn, cfg.db_path)
-            return 0
-
-        if args.command == "sync" and args.source == "goodreads":
-            summary = import_goodreads_csv(conn, args.csv, mode="sync")
+        # `import` and `sync` run the same safe, idempotent operation; the command
+        # name only sets the run label (a friendly name for the first load vs. a
+        # later refresh). Both must surface conflicts — earlier, `import` recorded
+        # conflicts in the database but wrote no report, so they passed silently.
+        if args.command in ("import", "sync") and args.source == "goodreads":
+            summary = import_goodreads_csv(conn, args.csv, mode=args.command)
             print(latest_sync_summary_markdown(conn))
             if summary.conflicts:
                 output = Path("reports") / f"conflicts-import-{summary.import_run_id}.md"
@@ -149,7 +146,11 @@ def _dispatch(args, parser) -> int:
 
         if args.command == "conflicts":
             groups = conflicts_service.list_open_conflicts(conn)
-            print(_format_conflicts(groups))
+            output = _format_conflicts(groups)
+            if args.all:
+                decided = conflicts_service.list_decided_conflicts(conn)
+                output += "\n\n" + _format_decided_conflicts(decided)
+            print(output)
             return 0
 
         if args.command == "dedupe":
@@ -161,19 +162,25 @@ def _dispatch(args, parser) -> int:
         if args.command == "resolve":
             if args.accept_incoming:
                 choice, custom = "incoming", None
+            elif args.ignore:
+                choice, custom = "ignore", None
+            elif args.review_later:
+                choice, custom = "later", None
+            elif args.reopen:
+                choice, custom = "reopen", None
             elif args.set is not None:
                 choice, custom = "custom", args.set
             else:
                 choice, custom = "local", None
             try:
                 outcome = conflicts_service.resolve_conflict(
-                    conn, args.conflict_id, choice=choice, custom_value=custom
+                    conn, args.conflict_id, choice=choice, custom_value=custom, actor="cli"
                 )
             except ValueError as exc:
                 raise AdsoError(
                     str(exc), hint="Run `adso conflicts` to list open conflict IDs."
                 ) from exc
-            message = f"Resolved conflict {args.conflict_id} ({outcome['field_label']}): {outcome['resolution_label']}"
+            message = f"Conflict {args.conflict_id} ({outcome['field_label']}): {outcome['resolution_label']}"
             if outcome["value"]:
                 message += f" → {outcome['value']}"
             print(message)
@@ -302,7 +309,9 @@ def _build_parser() -> argparse.ArgumentParser:
     show_parser = subparsers.add_parser("show", help="Show detailed information for one book")
     show_parser.add_argument("goodreads_id", help="Goodreads Book ID")
 
-    import_parser = subparsers.add_parser("import", help="Import source data")
+    import_parser = subparsers.add_parser(
+        "import", help="Load source data (alias of `sync`; conventional name for the first load)"
+    )
     import_sub = import_parser.add_subparsers(dest="source", required=True)
     goodreads_import = import_sub.add_parser("goodreads", help="Import a Goodreads CSV export")
     goodreads_import.add_argument("csv", help="Path to Goodreads CSV export")
@@ -310,7 +319,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "--no-covers", action="store_true", help="Skip the automatic cover-art fetch after import"
     )
 
-    sync_parser = subparsers.add_parser("sync", help="Sync source data into the local catalogue")
+    sync_parser = subparsers.add_parser(
+        "sync", help="Refresh the catalogue from source data (same safe operation as `import`)"
+    )
     sync_sub = sync_parser.add_subparsers(dest="source", required=True)
     goodreads_sync = sync_sub.add_parser("goodreads", help="Sync a Goodreads CSV export")
     goodreads_sync.add_argument("csv", help="Path to Goodreads CSV export")
@@ -347,13 +358,20 @@ def _build_parser() -> argparse.ArgumentParser:
     edit_parser.add_argument("--loaned-to", help="Who currently has the book")
     edit_parser.add_argument("--local-notes", help="Local catalogue notes")
 
-    subparsers.add_parser("conflicts", help="List pending sync conflicts with their IDs")
+    conflicts_parser = subparsers.add_parser(
+        "conflicts", help="List open sync conflicts with their IDs"
+    )
+    conflicts_parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Also show already-decided conflicts and how they were decided",
+    )
 
     subparsers.add_parser(
         "dedupe", help="Scan the catalogue for duplicate books (merge them in the web UI)"
     )
 
-    resolve_parser = subparsers.add_parser("resolve", help="Resolve a sync conflict by ID")
+    resolve_parser = subparsers.add_parser("resolve", help="Decide a sync conflict by ID")
     resolve_parser.add_argument("conflict_id", type=int, help="Conflict ID (see `adso conflicts`)")
     resolve_group = resolve_parser.add_mutually_exclusive_group()
     resolve_group.add_argument(
@@ -363,6 +381,19 @@ def _build_parser() -> argparse.ArgumentParser:
         "--accept-incoming", action="store_true", help="Accept the incoming Goodreads value"
     )
     resolve_group.add_argument("--set", dest="set", metavar="VALUE", help="Set a custom value")
+    resolve_group.add_argument(
+        "--ignore", action="store_true", help="Dismiss the conflict, leaving the local value unchanged"
+    )
+    resolve_group.add_argument(
+        "--review-later",
+        "--later",
+        dest="review_later",
+        action="store_true",
+        help="Defer the decision; the conflict stays open but is flagged",
+    )
+    resolve_group.add_argument(
+        "--reopen", action="store_true", help="Return a decided conflict to pending"
+    )
 
     report_parser = subparsers.add_parser("report", help="Generate reports")
     report_sub = report_parser.add_subparsers(dest="report_type", required=True)
@@ -601,7 +632,7 @@ def _format_notion_export_result(result: dict[str, object], *, dry_run: bool) ->
 
 def _format_conflicts(groups: list[dict[str, object]]) -> str:
     if not groups:
-        return "No pending conflicts."
+        return "No open conflicts."
     lines: list[str] = []
     total = 0
     for group in groups:
@@ -611,13 +642,39 @@ def _format_conflicts(groups: list[dict[str, object]]) -> str:
         lines.append(f"{group['title']} — {author} (Goodreads ID {group.get('goodreads_id') or '?'})")
         for conflict in group["conflicts"]:  # type: ignore[index]
             total += 1
+            deferred = " [deferred]" if conflict.get("deferred") else ""
             lines.append(
-                f"  [{conflict['id']}] {conflict['field_label']}: "
+                f"  [{conflict['id']}] {conflict['field_label']}{deferred}: "
                 f"local={_display_value(conflict['local'])!r}  "
                 f"incoming={_display_value(conflict['incoming'])!r}"
             )
     lines.append("")
-    lines.append(f"{total} pending conflict(s). Resolve with `adso resolve ID [--accept-incoming|--set VALUE]`.")
+    lines.append(
+        f"{total} open conflict(s). Decide with "
+        "`adso resolve ID [--accept-incoming|--set VALUE|--ignore|--review-later]`."
+    )
+    return "\n".join(lines)
+
+
+def _format_decided_conflicts(groups: list[dict[str, object]]) -> str:
+    if not groups:
+        return "No decided conflicts yet."
+    lines: list[str] = ["Decided conflicts", "-----------------"]
+    for group in groups:
+        lines.append("")
+        author = group.get("author") or "Unknown author"
+        lines.append(f"{group['title']} — {author} (Goodreads ID {group.get('goodreads_id') or '?'})")
+        for conflict in group["conflicts"]:  # type: ignore[index]
+            actor = conflict.get("actor")
+            provenance = f" via {actor}" if actor else ""
+            value = conflict.get("value")
+            value_suffix = f" → {value}" if value else ""
+            lines.append(
+                f"  [{conflict['id']}] {conflict['field_label']}: "
+                f"{conflict['decision_label']}{provenance}{value_suffix}"
+            )
+    lines.append("")
+    lines.append("Reopen any of these with `adso resolve ID --reopen`.")
     return "\n".join(lines)
 
 
@@ -694,6 +751,11 @@ def _format_book_detail(book: dict[str, object]) -> str:
                 ("Additional Authors", book.get("additional_authors")),
                 ("ISBN-10", book.get("isbn10")),
                 ("ISBN-13", book.get("isbn13")),
+                ("Publisher", book.get("publisher")),
+                ("Binding", book.get("binding")),
+                ("Number of Pages", book.get("number_of_pages")),
+                ("Year Published", book.get("year_published")),
+                ("Original Publication Year", book.get("original_publication_year")),
                 ("Reading Status", book.get("reading_status")),
                 ("Exclusive Shelf", book.get("exclusive_shelf")),
                 ("Shelves", shelves_text),

@@ -41,6 +41,31 @@ LOCAL_FIELDS = (
     "local_notes",
 )
 
+# Columns indexed for full-text search. These back both the persistent FTS5
+# index (see _migrate_search_fts) and the LIKE fallback in adso.catalogue, so
+# the two search paths always cover the same fields. Every entry must be a real
+# column on `books`. Changing this tuple changes the FTS schema: an existing
+# books_fts built from the old columns won't pick up the change until it is
+# dropped and rebuilt, so bump the migration if you edit it.
+SEARCH_FIELDS = (
+    "title",
+    "author",
+    "additional_authors",
+    "isbn10",
+    "isbn13",
+    "publisher",
+    "binding",
+    "reading_status",
+    "exclusive_shelf",
+    "shelves_json",
+    "my_review",
+    "private_notes",
+    "location",
+    "shelf_box",
+    "loaned_to",
+    "local_notes",
+)
+
 
 def connect(db_path: str | Path) -> sqlite3.Connection:
     # check_same_thread=False: FastAPI may run a single request's dependency and
@@ -165,10 +190,29 @@ def initialize(conn: sqlite3.Connection) -> None:
             UNIQUE(group_key, book_id),
             FOREIGN KEY(book_id) REFERENCES books(id) ON DELETE CASCADE
         );
+
+        -- Append-only audit trail of every decision taken on a conflict. The
+        -- current state is denormalized onto sync_conflicts (status/resolution);
+        -- this table is the full, ordered history with provenance.
+        CREATE TABLE IF NOT EXISTS conflict_decisions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conflict_id INTEGER NOT NULL,
+            decision TEXT NOT NULL,
+            resulting_value TEXT,
+            actor TEXT NOT NULL DEFAULT 'cli',
+            note TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(conflict_id) REFERENCES sync_conflicts(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_conflict_decisions_conflict
+            ON conflict_decisions(conflict_id, id);
         """
     )
     _migrate_sync_conflicts(conn)
     _migrate_book_covers(conn)
+    _migrate_conflict_decisions(conn)
+    _migrate_search_fts(conn)
     conn.commit()
 
 
@@ -187,6 +231,115 @@ def _migrate_book_covers(conn: sqlite3.Connection) -> None:
     for column in ("cover_path", "cover_source", "cover_source_url", "cover_status", "cover_fetched_at"):
         if column not in existing:
             conn.execute(f"ALTER TABLE books ADD COLUMN {column} TEXT")
+
+
+# Maps an already-resolved conflict's `resolution` keyword to the field whose
+# stored value became the active one, so a backfilled audit row can record the
+# resulting value the same way a fresh decision would.
+_RESOLUTION_RESULT_COLUMN = {
+    "kept_local": "local_value",
+    "accepted_incoming": "incoming_value",
+}
+
+
+def _migrate_conflict_decisions(conn: sqlite3.Connection) -> None:
+    """Seed the audit trail for conflicts resolved before it existed.
+
+    The table itself is created in ``initialize``. On an upgraded catalogue the
+    audit history is empty while resolved conflicts already carry a resolution;
+    backfill one ``legacy`` decision row per such conflict so the trail is
+    complete. The "empty audit + resolved conflicts" state only occurs once, so
+    this is naturally idempotent — every decision made from now on writes its own
+    row (see record_conflict_decision).
+    """
+    already_seeded = conn.execute("SELECT 1 FROM conflict_decisions LIMIT 1").fetchone()
+    if already_seeded:
+        return
+    resolved = conn.execute(
+        """
+        SELECT id, resolution, local_value, incoming_value, resolved_at
+        FROM sync_conflicts
+        WHERE status = 'resolved' AND resolution IS NOT NULL
+        """
+    ).fetchall()
+    for row in resolved:
+        result_column = _RESOLUTION_RESULT_COLUMN.get(row["resolution"])
+        resulting_value = row[result_column] if result_column else None
+        conn.execute(
+            """
+            INSERT INTO conflict_decisions
+                (conflict_id, decision, resulting_value, actor, created_at)
+            VALUES (?, ?, ?, 'legacy', ?)
+            """,
+            (row["id"], row["resolution"], resulting_value, row["resolved_at"]),
+        )
+
+
+def _sqlite_has_fts5(conn: sqlite3.Connection) -> bool:
+    """Whether this SQLite build can create FTS5 tables (it's a compile option)."""
+    try:
+        conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS temp.adso_fts5_probe USING fts5(x)")
+        conn.execute("DROP TABLE temp.adso_fts5_probe")
+        return True
+    except sqlite3.OperationalError:
+        return False
+
+
+def _migrate_search_fts(conn: sqlite3.Connection) -> None:
+    """Build a persistent FTS5 search index kept current by triggers.
+
+    Earlier, search rebuilt a temp FTS table from every book on each query —
+    correct but O(catalogue) per call, which would bite repeated queries behind
+    the web UI (DAV-146). Instead we keep one external-content FTS5 index
+    (``books_fts`` reads its column values straight from ``books``) and maintain
+    it with AFTER INSERT/UPDATE/DELETE triggers, so a search is just an index
+    lookup. Built once here; if it already exists the triggers have kept it fresh
+    and there's nothing to do. Skipped entirely on SQLite builds without FTS5,
+    where adso.catalogue falls back to LIKE search.
+    """
+    if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='books_fts'"
+    ).fetchone():
+        return
+    if not _sqlite_has_fts5(conn):
+        return
+    # The index and its triggers read every SEARCH_FIELDS column off `books`; on
+    # an unexpectedly incomplete schema, skip rather than crash — search falls
+    # back to LIKE in adso.catalogue.
+    book_columns = {row["name"] for row in conn.execute("PRAGMA table_info(books)")}
+    if not set(SEARCH_FIELDS) <= book_columns:
+        return
+
+    cols = ", ".join(SEARCH_FIELDS)
+    new_values = ", ".join(f"new.{field}" for field in SEARCH_FIELDS)
+    old_values = ", ".join(f"old.{field}" for field in SEARCH_FIELDS)
+
+    conn.executescript(
+        f"""
+        CREATE VIRTUAL TABLE books_fts USING fts5(
+            {cols},
+            content='books',
+            content_rowid='id'
+        );
+
+        CREATE TRIGGER books_fts_ai AFTER INSERT ON books BEGIN
+            INSERT INTO books_fts (rowid, {cols}) VALUES (new.id, {new_values});
+        END;
+
+        CREATE TRIGGER books_fts_ad AFTER DELETE ON books BEGIN
+            INSERT INTO books_fts (books_fts, rowid, {cols})
+            VALUES ('delete', old.id, {old_values});
+        END;
+
+        CREATE TRIGGER books_fts_au AFTER UPDATE ON books BEGIN
+            INSERT INTO books_fts (books_fts, rowid, {cols})
+            VALUES ('delete', old.id, {old_values});
+            INSERT INTO books_fts (rowid, {cols}) VALUES (new.id, {new_values});
+        END;
+        """
+    )
+    # Populate from any rows that already exist (an upgraded catalogue).
+    conn.execute("INSERT INTO books_fts (books_fts) VALUES ('rebuild')")
 
 
 def create_import_run(
@@ -483,14 +636,16 @@ def get_conflict(conn: sqlite3.Connection, conflict_id: int) -> sqlite3.Row | No
 def list_conflicts(
     conn: sqlite3.Connection,
     *,
-    status: str | None = "pending",
+    status: str | tuple[str, ...] | None = "pending",
     book_id: int | None = None,
 ) -> list[sqlite3.Row]:
     clauses: list[str] = []
     params: list[Any] = []
     if status is not None:
-        clauses.append("c.status = ?")
-        params.append(status)
+        statuses = (status,) if isinstance(status, str) else tuple(status)
+        placeholders = ", ".join("?" for _ in statuses)
+        clauses.append(f"c.status IN ({placeholders})")
+        params.extend(statuses)
     if book_id is not None:
         clauses.append("c.book_id = ?")
         params.append(book_id)
@@ -507,24 +662,90 @@ def list_conflicts(
     ).fetchall()
 
 
+# Conflict status buckets. "open" still needs a decision (pending = act now,
+# review_later = the user deferred it); "closed" has one (resolved/ignored).
+OPEN_CONFLICT_STATUSES = ("pending", "review_later")
+DECIDED_CONFLICT_STATUSES = ("resolved", "ignored")
+
+
+def set_conflict_status(
+    conn: sqlite3.Connection,
+    conflict_id: int,
+    *,
+    status: str,
+    resolution: str | None,
+) -> None:
+    """Set the current (denormalized) state of a conflict.
+
+    Pass status='pending' with resolution=None to reopen a decided conflict;
+    that also clears resolved_at. Any other status stamps resolved_at now.
+    """
+    if status == "pending":
+        conn.execute(
+            "UPDATE sync_conflicts SET status = 'pending', resolution = NULL, resolved_at = NULL WHERE id = ?",
+            (conflict_id,),
+        )
+        return
+    conn.execute(
+        """
+        UPDATE sync_conflicts
+        SET status = ?, resolution = ?, resolved_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (status, resolution, conflict_id),
+    )
+
+
 def set_conflict_resolution(
     conn: sqlite3.Connection,
     conflict_id: int,
     *,
     resolution: str,
 ) -> None:
+    """Mark a conflict resolved with a value resolution (back-compat wrapper)."""
+    set_conflict_status(conn, conflict_id, status="resolved", resolution=resolution)
+
+
+def reopen_conflict(conn: sqlite3.Connection, conflict_id: int) -> None:
+    """Return a decided conflict to pending so it can be decided again."""
+    set_conflict_status(conn, conflict_id, status="pending", resolution=None)
+
+
+def record_conflict_decision(
+    conn: sqlite3.Connection,
+    conflict_id: int,
+    *,
+    decision: str,
+    resulting_value: Any = None,
+    actor: str = "cli",
+    note: str | None = None,
+) -> None:
+    """Append one immutable row to a conflict's decision/audit trail."""
     conn.execute(
         """
-        UPDATE sync_conflicts
-        SET status = 'resolved', resolution = ?, resolved_at = CURRENT_TIMESTAMP
-        WHERE id = ?
+        INSERT INTO conflict_decisions
+            (conflict_id, decision, resulting_value, actor, note)
+        VALUES (?, ?, ?, ?, ?)
         """,
-        (resolution, conflict_id),
+        (conflict_id, decision, serialize_value(resulting_value), actor, note),
     )
+
+
+def list_conflict_decisions(conn: sqlite3.Connection, conflict_id: int) -> list[sqlite3.Row]:
+    """Return a conflict's decision history, oldest first."""
+    return conn.execute(
+        "SELECT * FROM conflict_decisions WHERE conflict_id = ? ORDER BY id",
+        (conflict_id,),
+    ).fetchall()
 
 
 def pending_conflict_count(conn: sqlite3.Connection) -> int:
     row = conn.execute("SELECT COUNT(*) FROM sync_conflicts WHERE status = 'pending'").fetchone()
+    return int(row[0])
+
+
+def deferred_conflict_count(conn: sqlite3.Connection) -> int:
+    row = conn.execute("SELECT COUNT(*) FROM sync_conflicts WHERE status = 'review_later'").fetchone()
     return int(row[0])
 
 

@@ -127,6 +127,89 @@ class ConflictResolutionTests(unittest.TestCase):
             5,
         )
 
+    def test_ignore_closes_without_changing_value(self) -> None:
+        outcome = conflicts_service.resolve_conflict(self.conn, self.conflict_id, choice="ignore")
+        self.assertEqual(outcome["status"], "ignored")
+        self.assertEqual(self._reading_status(), "Currently Reading")
+        self.assertEqual(conflicts_service.pending_count(self.conn), 0)
+        self.assertEqual(conflicts_service.deferred_count(self.conn), 0)
+
+    def test_review_later_stays_open_and_is_flagged_deferred(self) -> None:
+        outcome = conflicts_service.resolve_conflict(self.conn, self.conflict_id, choice="later")
+        self.assertEqual(outcome["status"], "review_later")
+        # Deferred is not "pending" (the act-now badge) but is still open.
+        self.assertEqual(conflicts_service.pending_count(self.conn), 0)
+        self.assertEqual(conflicts_service.deferred_count(self.conn), 1)
+        groups = conflicts_service.list_open_conflicts(self.conn)
+        self.assertTrue(groups[0]["conflicts"][0]["deferred"])
+
+    def test_reopen_returns_decided_conflict_to_pending(self) -> None:
+        conflicts_service.resolve_conflict(self.conn, self.conflict_id, choice="incoming")
+        self.assertEqual(conflicts_service.pending_count(self.conn), 0)
+        outcome = conflicts_service.resolve_conflict(self.conn, self.conflict_id, choice="reopen")
+        self.assertEqual(outcome["status"], "pending")
+        self.assertEqual(conflicts_service.pending_count(self.conn), 1)
+
+    def test_keep_local_restores_value_after_accept_then_reopen(self) -> None:
+        # The reversibility cycle: accept incoming, reopen, then keep-local must
+        # restore the original local value to the book (not silently leave it).
+        conflicts_service.resolve_conflict(self.conn, self.conflict_id, choice="incoming")
+        self.assertEqual(self._reading_status(), "Read")
+        conflicts_service.resolve_conflict(self.conn, self.conflict_id, choice="reopen")
+        conflicts_service.resolve_conflict(self.conn, self.conflict_id, choice="local")
+        self.assertEqual(self._reading_status(), "Currently Reading")
+
+    def test_decided_conflict_is_idempotent_until_reopened(self) -> None:
+        conflicts_service.resolve_conflict(self.conn, self.conflict_id, choice="ignore")
+        # A second decision without reopening first is a no-op (can't flip a value).
+        outcome = conflicts_service.resolve_conflict(self.conn, self.conflict_id, choice="incoming")
+        self.assertEqual(outcome["status"], "ignored")
+        self.assertEqual(self._reading_status(), "Currently Reading")
+        self.assertEqual(len(conflicts_service.conflict_history(self.conn, self.conflict_id)), 1)
+
+    def test_audit_trail_records_each_decision_with_provenance(self) -> None:
+        conflicts_service.resolve_conflict(self.conn, self.conflict_id, choice="later", actor="web")
+        conflicts_service.resolve_conflict(self.conn, self.conflict_id, choice="reopen", actor="cli")
+        conflicts_service.resolve_conflict(self.conn, self.conflict_id, choice="incoming", actor="web")
+        history = conflicts_service.conflict_history(self.conn, self.conflict_id)
+        self.assertEqual(
+            [h["decision"] for h in history], ["review_later", "reopened", "accepted_incoming"]
+        )
+        self.assertEqual([h["actor"] for h in history], ["web", "cli", "web"])
+        self.assertEqual(history[-1]["value"], "Read")
+
+    def test_bulk_resolve_ignore(self) -> None:
+        outcome = conflicts_service.resolve_book(self.conn, self.book_id, choice="ignore")
+        self.assertEqual(outcome["count"], 1)
+        self.assertEqual(conflicts_service.pending_count(self.conn), 0)
+        self.assertEqual(self._reading_status(), "Currently Reading")
+
+    def test_list_decided_conflicts_reports_decision_and_value(self) -> None:
+        conflicts_service.resolve_conflict(self.conn, self.conflict_id, choice="incoming", actor="web")
+        decided = conflicts_service.list_decided_conflicts(self.conn)
+        self.assertEqual(len(decided), 1)
+        conflict = decided[0]["conflicts"][0]
+        self.assertEqual(conflict["decision"], "accepted_incoming")
+        self.assertEqual(conflict["value"], "Read")
+        self.assertEqual(conflict["actor"], "web")
+
+    def test_invalid_decision_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            conflicts_service.decide_conflict(self.conn, self.conflict_id, decision="bogus")
+
+    def test_legacy_resolved_conflicts_are_backfilled(self) -> None:
+        # Mimic a pre-audit catalogue: a conflict resolved via the low-level
+        # setter (which writes no audit row), with an empty audit table.
+        db.set_conflict_resolution(self.conn, self.conflict_id, resolution="accepted_incoming")
+        self.conn.execute("DELETE FROM conflict_decisions")
+        self.conn.commit()
+        db._migrate_conflict_decisions(self.conn)
+        history = conflicts_service.conflict_history(self.conn, self.conflict_id)
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["decision"], "accepted_incoming")
+        self.assertEqual(history[0]["actor"], "legacy")
+        self.assertEqual(history[0]["value"], "Read")
+
 
 if __name__ == "__main__":
     unittest.main()
