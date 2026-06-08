@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `show` and the CSV/JSON exports now surface the publisher, binding, page count,
+  and publication years that were already imported and synced.
+
+### Changed
+- `import` and `sync` are now documented as the same safe, idempotent operation,
+  and `import` writes a conflict report just like `sync` (previously it could
+  record conflicts silently).
+- Search now uses a persistent FTS5 index maintained by triggers instead of
+  rebuilding the index from scratch on every query.
+
+### Removed
+- Dropped the legacy `goodreads_to_notion.py` compatibility shim; use the `adso`
+  CLI instead.
+
 ## [0.1.0] - 2026-06-05
 
 First tagged release — a self-hosted technical preview. Clone it, install it, and
