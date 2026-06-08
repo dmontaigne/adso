@@ -1,0 +1,22 @@
+{# HTMX fragment: the outcome of a Notion preview or export. #}
+{% if error %}
+<div class="alert-destructive">{{ error }}</div>
+{% else %}
+<div class="rounded-lg border p-3 text-sm">
+  <p class="font-medium text-foreground">
+    {% if dry_run %}Dry run — nothing was written to Notion.{% else %}Export complete.{% endif %}
+  </p>
+  <div class="mt-2 flex flex-wrap gap-2">
+    <span class="badge-secondary">{{ result.created }} {{ "would be created" if dry_run else "created" }}</span>
+    <span class="badge-secondary">{{ result.updated }} {{ "would be updated" if dry_run else "updated" }}</span>
+    {% if result.errors %}<span class="badge-destructive">{{ result.errors }} error{{ "" if result.errors == 1 else "s" }}</span>{% endif %}
+  </div>
+  {% if dry_run and result.actions %}
+  <ul class="mt-3 list-disc space-y-1 pl-5 text-muted-foreground">
+    {% for a in result.actions %}
+    <li>{{ "Would update" if a.action == "update" else "Would create" }}: {{ a.title or "Untitled" }} (Goodreads ID {{ a.goodreads_id or "unknown" }})</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</div>
+{% endif %}

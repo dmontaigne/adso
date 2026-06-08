@@ -6,6 +6,30 @@
   Every import and sync against your catalogue, newest first.
 </p>
 
+{% if latest %}
+<div class="card mb-6">
+  <header class="flex flex-wrap items-center justify-between gap-2">
+    <h2>Latest sync</h2>
+    <span class="text-sm text-muted-foreground">{{ latest.imported_at }}</span>
+  </header>
+  <section class="pt-2">
+    <div class="flex flex-wrap gap-2">
+      {% if latest.mode == "sync" %}<span class="badge-secondary">sync</span>{% else %}<span class="badge-outline">import</span>{% endif %}
+      <span class="badge-secondary">{{ latest.created }} new</span>
+      <span class="badge-secondary">{{ latest.updated }} updated</span>
+      <span class="badge-outline">{{ latest.unchanged }} unchanged</span>
+      {% if pending_count %}<span class="badge-destructive">{{ pending_count }} pending conflict{{ "" if pending_count == 1 else "s" }}</span>{% endif %}
+    </div>
+    <div class="mt-4 flex flex-wrap gap-3 text-sm">
+      <a href="/reports/summary" class="hover:underline">Sync summary →</a>
+      <a href="/reports/conflicts" class="hover:underline">Conflict report →</a>
+      {% if pending_count %}<a href="/conflicts" class="font-medium hover:underline">Review conflicts →</a>{% endif %}
+      <a href="/export" class="hover:underline">Export →</a>
+    </div>
+  </section>
+</div>
+{% endif %}
+
 {% if runs %}
 <div class="overflow-x-auto rounded-lg border">
   <table class="table">

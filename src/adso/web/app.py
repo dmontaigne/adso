@@ -25,6 +25,8 @@ from .. import conflicts as conflicts_service
 from .. import covers as covers_service
 from .. import db
 from .. import dedupe as dedupe_service
+from .. import exports as exports_service
+from .. import reports as reports_service
 from .. import sync as sync_service
 from ..catalogue import (
     BookFilters,
@@ -34,6 +36,8 @@ from ..catalogue import (
     list_books,
     search_books,
 )
+from ..config import ResolvedConfig, mask_secret
+from ..notion import NotionConfigError, export_to_notion
 
 WEB_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = WEB_DIR / "templates"
@@ -62,13 +66,29 @@ def _placeholder_svg(label: str) -> str:
     )
 
 
-def create_app(db_path: str | Path) -> FastAPI:
-    """Build a FastAPI app bound to the SQLite database at ``db_path``."""
+def create_app(db_path: str | Path, *, config: ResolvedConfig | None = None) -> FastAPI:
+    """Build a FastAPI app bound to the SQLite database at ``db_path``.
+
+    ``config`` carries the resolved profile + Notion target (from
+    :func:`adso.config.load`), so the export surface can show the active target
+    and drive a Notion export. When it is ``None`` the Notion affordance renders
+    as "not configured" and never attempts a network write.
+    """
 
     db_path = str(db_path)
     # Covers are stored beside the database; resolve relative cover_path values
     # against this root when serving them.
     cover_root = Path(db_path).resolve().parent
+
+    def _notion_target() -> dict[str, object]:
+        """How to describe the Notion export target on the export page."""
+        configured = bool(config and config.notion_api_key and config.notion_database_id)
+        return {
+            "configured": configured,
+            "profile": (config.profile if config else None) or "(none)",
+            "target": (config.notion_target if config else None) or "(unnamed)",
+            "database": mask_secret(config.notion_database_id) if config else "(unset)",
+        }
     app = FastAPI(
         title="Adso",
         description="Local-first book catalogue web UI.",
@@ -299,6 +319,7 @@ def create_app(db_path: str | Path) -> FastAPI:
             "activity.html",
             {
                 "runs": runs,
+                "latest": runs[0] if runs else None,
                 "pending_count": conflicts_service.pending_count(conn),
                 "duplicate_count": dedupe_service.pending_count(conn),
             },
@@ -435,6 +456,89 @@ def create_app(db_path: str | Path) -> FastAPI:
             request,
             "_duplicate_resolved.html",
             {"duplicate_count": dedupe_service.pending_count(conn), **outcome},
+        )
+
+    @app.get("/export", response_class=HTMLResponse)
+    def export_page(
+        request: Request,
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> HTMLResponse:
+        return templates.TemplateResponse(
+            request,
+            "export.html",
+            {
+                "notion": _notion_target(),
+                "book_count": conn.execute("SELECT COUNT(*) FROM books").fetchone()[0],
+                "pending_count": conflicts_service.pending_count(conn),
+                "duplicate_count": dedupe_service.pending_count(conn),
+            },
+        )
+
+    @app.get("/export/catalogue.csv")
+    def export_catalogue_csv(conn: sqlite3.Connection = Depends(get_conn)) -> Response:
+        return Response(
+            content=exports_service.catalogue_csv_string(conn),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=adso-catalogue.csv"},
+        )
+
+    @app.get("/export/catalogue.json")
+    def export_catalogue_json(conn: sqlite3.Connection = Depends(get_conn)) -> Response:
+        return Response(
+            content=exports_service.catalogue_json_string(conn),
+            media_type="application/json",
+            headers={"Content-Disposition": "attachment; filename=adso-catalogue.json"},
+        )
+
+    @app.post("/export/notion", response_class=HTMLResponse)
+    def export_notion(
+        request: Request,
+        conn: sqlite3.Connection = Depends(get_conn),
+        dry_run: bool = Form(False),
+    ) -> HTMLResponse:
+        # A real Notion export is a network write to the user's own database, so
+        # the UI offers a dry-run preview first; the actual write is explicit.
+        try:
+            result = export_to_notion(
+                conn,
+                api_key=config.notion_api_key if config else None,
+                database_id=config.notion_database_id if config else None,
+                dry_run=dry_run,
+            )
+        except NotionConfigError as exc:
+            return templates.TemplateResponse(
+                request, "_notion_result.html", {"error": str(exc)}
+            )
+        return templates.TemplateResponse(
+            request,
+            "_notion_result.html",
+            {"result": result, "dry_run": dry_run},
+        )
+
+    @app.get("/reports/summary", response_class=HTMLResponse)
+    def report_summary(
+        request: Request,
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> HTMLResponse:
+        return _report_page(request, conn, "Sync summary", reports_service.latest_sync_summary_markdown(conn))
+
+    @app.get("/reports/conflicts", response_class=HTMLResponse)
+    def report_conflicts(
+        request: Request,
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> HTMLResponse:
+        return _report_page(request, conn, "Conflict report", reports_service.latest_conflicts_markdown(conn))
+
+    def _report_page(request: Request, conn: sqlite3.Connection, title: str, body: str) -> HTMLResponse:
+        return templates.TemplateResponse(
+            request,
+            "report.html",
+            {
+                "report_title": title,
+                "report_body": body,
+                "pending_count": conflicts_service.pending_count(conn),
+                "duplicate_count": dedupe_service.pending_count(conn),
+            },
         )
 
     @app.get("/api/conflicts")

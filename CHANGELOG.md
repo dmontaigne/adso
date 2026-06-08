@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `adso resolve` gains `--ignore`, `--review-later`, and `--reopen`.
 - `show` and the CSV/JSON exports now surface the publisher, binding, page count,
   and publication years that were already imported and synced.
+- Web UI **Export** page: download the catalogue as CSV or JSON, and run a
+  Notion export with a dry-run preview before writing.
+- Web UI **report views** (`/reports/summary`, `/reports/conflicts`) and a
+  **latest-sync status card** on the Activity page linking to them.
+- `exports.catalogue_csv_string` / `catalogue_json_string` (in-memory
+  serializers reused by the file exports and the web downloads).
 
 ### Changed
 - `import` and `sync` are now documented as the same safe, idempotent operation,
