@@ -70,6 +70,7 @@ def _dispatch(args, parser) -> int:
     if args.command == "serve":
         return _run_server(
             cfg.db_path,
+            config=cfg,
             host=args.host,
             port=args.port,
             open_browser=not args.no_browser,
@@ -222,7 +223,14 @@ def _dispatch(args, parser) -> int:
         conn.close()
 
 
-def _run_server(db_path: str, *, host: str, port: int, open_browser: bool) -> int:
+def _run_server(
+    db_path: str,
+    *,
+    config: ResolvedConfig | None = None,
+    host: str,
+    port: int,
+    open_browser: bool,
+) -> int:
     try:
         import uvicorn
     except ModuleNotFoundError as exc:
@@ -238,7 +246,7 @@ def _run_server(db_path: str, *, host: str, port: int, open_browser: bool) -> in
     db.initialize(conn)
     conn.close()
 
-    app = create_app(db_path)
+    app = create_app(db_path, config=config)
     url = f"http://{host}:{port}"
     print(f"Adso web UI running at {url}  (Ctrl+C to stop)")
 

@@ -347,6 +347,24 @@ class AdsoCoreTests(unittest.TestCase):
         self.assertEqual(data[0]["title"], "The Name of the Rose")
         self.assertIn("goodreads_id,title,author", csv_export_path.read_text(encoding="utf-8"))
 
+    def test_catalogue_string_serializers_back_file_exports(self) -> None:
+        from adso.exports import catalogue_csv_string, catalogue_json_string
+
+        csv_path = self.root / "goodreads.csv"
+        write_goodreads_csv(csv_path, [row()])
+        import_goodreads_csv(self.conn, csv_path, mode="import")
+
+        csv_str = catalogue_csv_string(self.conn)
+        json_str = catalogue_json_string(self.conn)
+        self.assertTrue(csv_str.startswith("goodreads_id,title,author"))
+        self.assertIn("The Name of the Rose", csv_str)
+        self.assertEqual(json.loads(json_str)[0]["title"], "The Name of the Rose")
+        # The file exports must be exactly what the string serializers produce.
+        self.assertEqual(export_csv(self.conn, self.root / "c.csv").read_bytes(), csv_str.encode("utf-8"))
+        self.assertEqual(
+            export_json(self.conn, self.root / "c.json").read_text(encoding="utf-8"), json_str
+        )
+
     def test_notion_dry_run_reports_create_update_without_writes(self) -> None:
         csv_path = self.root / "goodreads.csv"
         write_goodreads_csv(
