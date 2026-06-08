@@ -31,7 +31,7 @@ from . import db
 
 # A descriptive User-Agent is requested by Open Library so they can identify
 # polite clients; see https://openlibrary.org/dev/docs/api/covers.
-USER_AGENT = "Adso/0.1 (local-first book catalogue; +https://github.com/dmontaigne/book-importer)"
+USER_AGENT = "Adso/0.1 (local-first book catalogue; +https://github.com/davidwhipps/adso)"
 RATE_LIMIT_DELAY = 0.75
 
 # (connect, read) timeouts: a stalled connection can never hang the whole run.

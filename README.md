@@ -1,11 +1,11 @@
-<p align="center">
-  <img src="assets/adso-logo.png" alt="Adso logo — a monk reading a book titled ADSO" width="200">
+<p align="left">
+  <img src="assets/adso-logo.png" alt="Adso logo" width="200">
 </p>
 
 # Adso
 
-<p align="center">
-  <a href="https://github.com/dmontaigne/adso/actions/workflows/ci.yml"><img src="https://github.com/dmontaigne/adso/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+<p align="left">
+  <a href="https://github.com/davidwhipps/adso/actions/workflows/ci.yml"><img src="https://github.com/davidwhipps/adso/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/python-3.9%2B-blue.svg" alt="Python 3.9+">
 </p>
@@ -23,7 +23,7 @@ v1 is CLI-first and SQLite-backed. Because every interface is just an adapter ov
 ## Quick Start
 
 ```bash
-git clone https://github.com/dmontaigne/adso.git
+git clone https://github.com/davidwhipps/adso.git
 cd adso
 python3 -m venv .venv
 . .venv/bin/activate
@@ -101,7 +101,7 @@ Covers resolve from free public APIs (Open Library, then Apple Books) — no acc
 
 These work but sit outside the core v1 surface:
 
-- **Local web UI** — `pip install ".[web]"`, then `adso serve` opens a browser view over the same catalogue (visual conflict resolution, import, activity, reports, and CSV/JSON/Notion export). Early preview; a proper write-up comes with v2.
+- **Local web UI** — `pip install ".[web]"`, then `adso serve` opens a browser view over the same catalogue (visual conflict resolution, import, activity, reports, local-field editing, and CSV/JSON/Notion export). Early preview; a proper write-up comes with v2.
 - **Configuration profiles** — `adso config init` lets you bundle a database path and connector settings under named profiles and switch with `--profile`. Handy if you keep more than one library.
 - **Notion export** — `pip install ".[notion]"` adds `adso export notion`, an optional adapter that mirrors the catalogue into a Notion database. Experimental; the local SQLite catalogue always stays canonical.
 

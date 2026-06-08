@@ -49,9 +49,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/dmontaigne/adso"
-Repository = "https://github.com/dmontaigne/adso"
-Issues = "https://github.com/dmontaigne/adso/issues"
+Homepage = "https://github.com/davidwhipps/adso"
+Repository = "https://github.com/davidwhipps/adso"
+Issues = "https://github.com/davidwhipps/adso/issues"
 
 [project.scripts]
 adso = "adso.cli:main"

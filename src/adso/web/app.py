@@ -194,6 +194,76 @@ def create_app(db_path: str | Path, *, config: ResolvedConfig | None = None) -> 
             },
         )
 
+    def _local_card(
+        request: Request,
+        conn: sqlite3.Connection,
+        goodreads_id: str,
+        *,
+        editing: bool = False,
+        saved: bool = False,
+        error: str | None = None,
+    ) -> HTMLResponse:
+        """Render the local-catalogue card, read-only or as an edit form."""
+        book = get_book(conn, goodreads_id)
+        if book is None:
+            raise HTTPException(status_code=404, detail=f"No book for Goodreads ID {goodreads_id}")
+        template = "_local_fields_form.html" if editing else "_local_fields.html"
+        return templates.TemplateResponse(
+            request, template, {"book": book, "saved": saved, "error": error}
+        )
+
+    @app.get("/book/{goodreads_id}/local", response_class=HTMLResponse)
+    def local_fields(
+        request: Request,
+        goodreads_id: str,
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> HTMLResponse:
+        return _local_card(request, conn, goodreads_id)
+
+    @app.get("/book/{goodreads_id}/local/edit", response_class=HTMLResponse)
+    def local_fields_edit(
+        request: Request,
+        goodreads_id: str,
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> HTMLResponse:
+        return _local_card(request, conn, goodreads_id, editing=True)
+
+    @app.post("/book/{goodreads_id}/local", response_class=HTMLResponse)
+    def local_fields_save(
+        request: Request,
+        goodreads_id: str,
+        conn: sqlite3.Connection = Depends(get_conn),
+        owned: str | None = Form(None),
+        copy_count: str | None = Form(None),
+        location: str | None = Form(None),
+        shelf_box: str | None = Form(None),
+        loaned_to: str | None = Form(None),
+        local_notes: str | None = Form(None),
+    ) -> HTMLResponse:
+        # These are all LOCAL_FIELDS, which sync never touches, so editing them is
+        # always safe — db.update_local_fields enforces that boundary.
+        def _clean(value: str | None) -> str | None:
+            value = (value or "").strip()
+            return value or None
+
+        try:
+            count = max(0, int(copy_count)) if (copy_count or "").strip() else 0
+        except ValueError:
+            count = 0
+        updates = {
+            "owned": 1 if (owned or "").lower() in ("true", "on", "1") else 0,
+            "copy_count": count,
+            "location": _clean(location),
+            "shelf_box": _clean(shelf_box),
+            "loaned_to": _clean(loaned_to),
+            "local_notes": (local_notes or "").strip() or None,
+        }
+        try:
+            db.update_local_fields(conn, goodreads_id, updates)
+        except ValueError as exc:
+            return _local_card(request, conn, goodreads_id, editing=True, error=str(exc))
+        return _local_card(request, conn, goodreads_id, saved=True)
+
     @app.get("/covers/{goodreads_id}")
     def cover(
         goodreads_id: str,

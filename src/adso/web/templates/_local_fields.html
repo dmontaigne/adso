@@ -1,0 +1,25 @@
+{# Local-catalogue card: read view with an Edit toggle. Swapped in place. #}
+<div id="local-card" class="card">
+  <header class="flex items-center justify-between">
+    <h2>Local catalogue</h2>
+    <div class="flex items-center gap-2">
+      {% if saved %}<span class="badge">Saved</span>{% endif %}
+      <button class="btn-sm-outline"
+              hx-get="/book/{{ book.goodreads_id }}/local/edit"
+              hx-target="#local-card"
+              hx-swap="outerHTML">Edit</button>
+    </div>
+  </header>
+  <section>
+    <p class="mb-3 text-xs text-muted-foreground">Local only — yours, never synced to Goodreads.</p>
+    <dl class="grid grid-cols-[8rem_1fr] gap-y-2 text-sm">
+      <dt class="text-muted-foreground">Owned</dt>
+      <dd>{% if book.owned %}<span class="badge">yes</span>{% else %}<span class="badge-outline">no</span>{% endif %}</dd>
+      <dt class="text-muted-foreground">Copy count</dt><dd>{{ book.copy_count }}</dd>
+      <dt class="text-muted-foreground">Location</dt><dd>{{ book.location or "—" }}</dd>
+      <dt class="text-muted-foreground">Shelf / box</dt><dd>{{ book.shelf_box or "—" }}</dd>
+      <dt class="text-muted-foreground">Loaned to</dt><dd>{{ book.loaned_to or "—" }}</dd>
+      <dt class="text-muted-foreground">Local notes</dt><dd class="whitespace-pre-line">{{ book.local_notes or "—" }}</dd>
+    </dl>
+  </section>
+</div>
