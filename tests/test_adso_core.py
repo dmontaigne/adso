@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import sqlite3
 import sys
 import tempfile
@@ -345,7 +346,13 @@ class AdsoCoreTests(unittest.TestCase):
 
         data = json.loads(json_path.read_text(encoding="utf-8"))
         self.assertEqual(data[0]["title"], "The Name of the Rose")
-        self.assertIn("goodreads_id,title,author", csv_export_path.read_text(encoding="utf-8"))
+        self.assertEqual(data[0]["publisher"], "Harvest Books")
+        csv_text = csv_export_path.read_text(encoding="utf-8")
+        self.assertIn("goodreads_id,title,author", csv_text)
+        # Bibliographic fields are normalized + synced, so they must be exportable too.
+        self.assertIn("publisher", csv_text)
+        self.assertIn("Harvest Books", csv_text)
+        self.assertIn("original_publication_year", csv_text)
 
     def test_notion_dry_run_reports_create_update_without_writes(self) -> None:
         csv_path = self.root / "goodreads.csv"
@@ -633,7 +640,7 @@ class AdsoCoreTests(unittest.TestCase):
         self.assertIsNone(missing)
 
     def test_search_uses_fts5_when_available(self) -> None:
-        with patch("adso.catalogue._sqlite_supports_fts5", return_value=True), patch(
+        with patch("adso.catalogue._fts_index_available", return_value=True), patch(
             "adso.catalogue._search_books_fts", return_value=[{"goodreads_id": "fts"}]
         ) as fts_search:
             results = search_books(self.conn, "winter", BookFilters(owned=True))
@@ -663,6 +670,40 @@ class AdsoCoreTests(unittest.TestCase):
             [result["goodreads_id"] for result in search_books(self.conn, "winter society")],
             ["2"],
         )
+
+    def test_search_index_is_persistent_and_trigger_maintained(self) -> None:
+        # DAV-146: a persistent FTS5 index kept current by triggers replaces the
+        # per-query temp rebuild. Prove it exists and tracks insert/update/delete.
+        csv_path = self.root / "goodreads.csv"
+        write_goodreads_csv(
+            csv_path,
+            [
+                row(),
+                row(**{"Book Id": "2", "Title": "The Left Hand of Darkness",
+                       "Author": "Ursula K. Le Guin"}),
+            ],
+        )
+        import_goodreads_csv(self.conn, csv_path, mode="import")
+
+        # Persistent (not a temp table): present in sqlite_master as a real table.
+        self.assertIsNotNone(
+            self.conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='books_fts'"
+            ).fetchone()
+        )
+
+        # INSERT trigger: imported rows are searchable.
+        self.assertEqual([b["goodreads_id"] for b in search_books(self.conn, "Le Guin")], ["2"])
+
+        # UPDATE trigger: a local-field edit is reflected without re-importing.
+        db.update_local_fields(self.conn, "1", {"local_notes": "Signed first edition"})
+        self.assertEqual([b["goodreads_id"] for b in search_books(self.conn, "Signed")], ["1"])
+
+        # DELETE trigger: merging a book out drops it from the index.
+        keep_id = db.get_book_by_goodreads_id(self.conn, "1")["id"]
+        drop_id = db.get_book_by_goodreads_id(self.conn, "2")["id"]
+        db.merge_books(self.conn, keep_id=keep_id, drop_id=drop_id)
+        self.assertEqual(search_books(self.conn, "Le Guin"), [])
 
     def test_cli_list_outputs_readable_rows_and_filters(self) -> None:
         csv_path = self.root / "goodreads.csv"
@@ -750,6 +791,10 @@ class AdsoCoreTests(unittest.TestCase):
         self.assertIn("Local Catalogue Fields", output)
         self.assertIn("Title: The Name of the Rose", output)
         self.assertIn("Rating: 5", output)
+        self.assertIn("Publisher: Harvest Books", output)
+        self.assertIn("Binding: Paperback", output)
+        self.assertIn("Number of Pages: 536", output)
+        self.assertIn("Original Publication Year: 1980", output)
         self.assertIn("Owned: yes", output)
         self.assertIn("Shelf/Box: A1", output)
         with self.assertRaises(SystemExit) as raised:
@@ -769,7 +814,14 @@ class AdsoCoreTests(unittest.TestCase):
         conn.close()
         second = self.root / "second.csv"
         write_goodreads_csv(second, [row(**{"Exclusive Shelf": "read", "Bookshelves": "read"})])
-        _run_cli(["--db", str(db_path), "import", "goodreads", str(second), "--no-covers"])
+        # `import` now writes a conflict report relative to the working directory,
+        # so run it from the temp root to avoid leaving a stray reports/ file.
+        cwd = os.getcwd()
+        os.chdir(self.root)
+        try:
+            _run_cli(["--db", str(db_path), "import", "goodreads", str(second), "--no-covers"])
+        finally:
+            os.chdir(cwd)
 
         conn = db.connect(db_path)
         cid = conn.execute(
@@ -795,6 +847,36 @@ class AdsoCoreTests(unittest.TestCase):
         report = _run_cli(["--db", str(db_path), "report", "conflicts"])
         self.assertIn("Status: Resolved", report)
         self.assertIn("Decision:", report)
+
+    def test_cli_import_surfaces_conflicts_like_sync(self) -> None:
+        # `import` and `sync` are the same operation; both must write a conflict
+        # report when conflicts arise. Previously `import` recorded conflicts in
+        # the database but wrote no report, so they passed silently (DAV-144).
+        db_path = self.root / "cli-import.sqlite"
+        csv_path = self.root / "goodreads.csv"
+        write_goodreads_csv(csv_path, [row()])
+        _run_cli(["--db", str(db_path), "import", "goodreads", str(csv_path), "--no-covers"])
+
+        # Diverge a tracked field locally, then re-run `import` with a moved shelf.
+        conn = db.connect(db_path)
+        conn.execute("UPDATE books SET reading_status = ? WHERE goodreads_id = ?", ("Local Status", "1"))
+        conn.commit()
+        conn.close()
+
+        changed = self.root / "goodreads-changed.csv"
+        write_goodreads_csv(changed, [row(**{"Exclusive Shelf": "read", "Bookshelves": "read"})])
+
+        # The conflict report path is resolved relative to the working directory.
+        cwd = os.getcwd()
+        os.chdir(self.root)
+        try:
+            output = _run_cli(["--db", str(db_path), "import", "goodreads", str(changed), "--no-covers"])
+        finally:
+            os.chdir(cwd)
+
+        self.assertIn("Conflict report:", output)
+        report = next((self.root / "reports").glob("conflicts-import-*.md"))
+        self.assertIn("reading_status", report.read_text(encoding="utf-8"))
 
     def test_cli_doctor_reports_without_initializing_database(self) -> None:
         db_path = self.root / "cli-doctor.sqlite"

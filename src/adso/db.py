@@ -41,6 +41,31 @@ LOCAL_FIELDS = (
     "local_notes",
 )
 
+# Columns indexed for full-text search. These back both the persistent FTS5
+# index (see _migrate_search_fts) and the LIKE fallback in adso.catalogue, so
+# the two search paths always cover the same fields. Every entry must be a real
+# column on `books`. Changing this tuple changes the FTS schema: an existing
+# books_fts built from the old columns won't pick up the change until it is
+# dropped and rebuilt, so bump the migration if you edit it.
+SEARCH_FIELDS = (
+    "title",
+    "author",
+    "additional_authors",
+    "isbn10",
+    "isbn13",
+    "publisher",
+    "binding",
+    "reading_status",
+    "exclusive_shelf",
+    "shelves_json",
+    "my_review",
+    "private_notes",
+    "location",
+    "shelf_box",
+    "loaned_to",
+    "local_notes",
+)
+
 
 def connect(db_path: str | Path) -> sqlite3.Connection:
     # check_same_thread=False: FastAPI may run a single request's dependency and
@@ -187,6 +212,7 @@ def initialize(conn: sqlite3.Connection) -> None:
     _migrate_sync_conflicts(conn)
     _migrate_book_covers(conn)
     _migrate_conflict_decisions(conn)
+    _migrate_search_fts(conn)
     conn.commit()
 
 
@@ -247,6 +273,73 @@ def _migrate_conflict_decisions(conn: sqlite3.Connection) -> None:
             """,
             (row["id"], row["resolution"], resulting_value, row["resolved_at"]),
         )
+
+
+def _sqlite_has_fts5(conn: sqlite3.Connection) -> bool:
+    """Whether this SQLite build can create FTS5 tables (it's a compile option)."""
+    try:
+        conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS temp.adso_fts5_probe USING fts5(x)")
+        conn.execute("DROP TABLE temp.adso_fts5_probe")
+        return True
+    except sqlite3.OperationalError:
+        return False
+
+
+def _migrate_search_fts(conn: sqlite3.Connection) -> None:
+    """Build a persistent FTS5 search index kept current by triggers.
+
+    Earlier, search rebuilt a temp FTS table from every book on each query —
+    correct but O(catalogue) per call, which would bite repeated queries behind
+    the web UI (DAV-146). Instead we keep one external-content FTS5 index
+    (``books_fts`` reads its column values straight from ``books``) and maintain
+    it with AFTER INSERT/UPDATE/DELETE triggers, so a search is just an index
+    lookup. Built once here; if it already exists the triggers have kept it fresh
+    and there's nothing to do. Skipped entirely on SQLite builds without FTS5,
+    where adso.catalogue falls back to LIKE search.
+    """
+    if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='books_fts'"
+    ).fetchone():
+        return
+    if not _sqlite_has_fts5(conn):
+        return
+    # The index and its triggers read every SEARCH_FIELDS column off `books`; on
+    # an unexpectedly incomplete schema, skip rather than crash — search falls
+    # back to LIKE in adso.catalogue.
+    book_columns = {row["name"] for row in conn.execute("PRAGMA table_info(books)")}
+    if not set(SEARCH_FIELDS) <= book_columns:
+        return
+
+    cols = ", ".join(SEARCH_FIELDS)
+    new_values = ", ".join(f"new.{field}" for field in SEARCH_FIELDS)
+    old_values = ", ".join(f"old.{field}" for field in SEARCH_FIELDS)
+
+    conn.executescript(
+        f"""
+        CREATE VIRTUAL TABLE books_fts USING fts5(
+            {cols},
+            content='books',
+            content_rowid='id'
+        );
+
+        CREATE TRIGGER books_fts_ai AFTER INSERT ON books BEGIN
+            INSERT INTO books_fts (rowid, {cols}) VALUES (new.id, {new_values});
+        END;
+
+        CREATE TRIGGER books_fts_ad AFTER DELETE ON books BEGIN
+            INSERT INTO books_fts (books_fts, rowid, {cols})
+            VALUES ('delete', old.id, {old_values});
+        END;
+
+        CREATE TRIGGER books_fts_au AFTER UPDATE ON books BEGIN
+            INSERT INTO books_fts (books_fts, rowid, {cols})
+            VALUES ('delete', old.id, {old_values});
+            INSERT INTO books_fts (rowid, {cols}) VALUES (new.id, {new_values});
+        END;
+        """
+    )
+    # Populate from any rows that already exist (an upgraded catalogue).
+    conn.execute("INSERT INTO books_fts (books_fts) VALUES ('rebuild')")
 
 
 def create_import_run(

@@ -101,15 +101,12 @@ def _dispatch(args, parser) -> int:
             print(_format_book_detail(book))
             return 0
 
-        if args.command == "import" and args.source == "goodreads":
-            summary = import_goodreads_csv(conn, args.csv, mode="import")
-            print(latest_sync_summary_markdown(conn))
-            if not args.no_covers:
-                _auto_fetch_covers(conn, cfg.db_path)
-            return 0
-
-        if args.command == "sync" and args.source == "goodreads":
-            summary = import_goodreads_csv(conn, args.csv, mode="sync")
+        # `import` and `sync` run the same safe, idempotent operation; the command
+        # name only sets the run label (a friendly name for the first load vs. a
+        # later refresh). Both must surface conflicts — earlier, `import` recorded
+        # conflicts in the database but wrote no report, so they passed silently.
+        if args.command in ("import", "sync") and args.source == "goodreads":
+            summary = import_goodreads_csv(conn, args.csv, mode=args.command)
             print(latest_sync_summary_markdown(conn))
             if summary.conflicts:
                 output = Path("reports") / f"conflicts-import-{summary.import_run_id}.md"
@@ -304,7 +301,9 @@ def _build_parser() -> argparse.ArgumentParser:
     show_parser = subparsers.add_parser("show", help="Show detailed information for one book")
     show_parser.add_argument("goodreads_id", help="Goodreads Book ID")
 
-    import_parser = subparsers.add_parser("import", help="Import source data")
+    import_parser = subparsers.add_parser(
+        "import", help="Load source data (alias of `sync`; conventional name for the first load)"
+    )
     import_sub = import_parser.add_subparsers(dest="source", required=True)
     goodreads_import = import_sub.add_parser("goodreads", help="Import a Goodreads CSV export")
     goodreads_import.add_argument("csv", help="Path to Goodreads CSV export")
@@ -312,7 +311,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "--no-covers", action="store_true", help="Skip the automatic cover-art fetch after import"
     )
 
-    sync_parser = subparsers.add_parser("sync", help="Sync source data into the local catalogue")
+    sync_parser = subparsers.add_parser(
+        "sync", help="Refresh the catalogue from source data (same safe operation as `import`)"
+    )
     sync_sub = sync_parser.add_subparsers(dest="source", required=True)
     goodreads_sync = sync_sub.add_parser("goodreads", help="Sync a Goodreads CSV export")
     goodreads_sync.add_argument("csv", help="Path to Goodreads CSV export")
@@ -742,6 +743,11 @@ def _format_book_detail(book: dict[str, object]) -> str:
                 ("Additional Authors", book.get("additional_authors")),
                 ("ISBN-10", book.get("isbn10")),
                 ("ISBN-13", book.get("isbn13")),
+                ("Publisher", book.get("publisher")),
+                ("Binding", book.get("binding")),
+                ("Number of Pages", book.get("number_of_pages")),
+                ("Year Published", book.get("year_published")),
+                ("Original Publication Year", book.get("original_publication_year")),
                 ("Reading Status", book.get("reading_status")),
                 ("Exclusive Shelf", book.get("exclusive_shelf")),
                 ("Shelves", shelves_text),
