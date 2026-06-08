@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Web UI: edit your **local catalogue fields** (owned, copy count, location,
+  shelf/box, loaned-to, notes) inline on a book's page — local-only, never synced
+  to Goodreads.
 - Conflict decisions now support **ignore** and **review-later** alongside
   keep-local / accept-incoming / custom, and any decision can be **reopened**.
 - Every decision is recorded in an append-only audit trail with provenance

@@ -102,5 +102,71 @@ class WebSurfaceTests(unittest.TestCase):
         self.assertIn("creds required", body)
 
 
+@unittest.skipUnless(_HAS_TESTCLIENT, "fastapi TestClient (httpx) not installed")
+class BookLocalEditWebTests(unittest.TestCase):
+    def setUp(self) -> None:
+        from adso.web.app import create_app
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = str(Path(self.tmp.name) / "adso.sqlite")
+        conn = db.connect(self.db_path)
+        db.initialize(conn)
+        run = db.create_import_run(conn, source="goodreads", source_path="x", mode="import", row_count=1)
+        db.insert_book_from_goodreads(
+            conn,
+            {"goodreads_id": "1", "title": "T", "reading_status": "Read", "shelves_json": "[]"},
+            import_run_id=run,
+        )
+        conn.commit()
+        conn.close()
+        self.client = TestClient(create_app(self.db_path))
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _owned(self) -> int:
+        conn = db.connect(self.db_path)
+        value = db.get_book_by_goodreads_id(conn, "1")["owned"]
+        conn.close()
+        return value
+
+    def test_detail_shows_editable_local_card(self) -> None:
+        body = self.client.get("/book/1").text
+        self.assertIn("Local catalogue", body)
+        self.assertIn("/book/1/local/edit", body)
+        self.assertIn("never synced to Goodreads", body)
+
+    def test_edit_form_renders_all_fields(self) -> None:
+        body = self.client.get("/book/1/local/edit").text
+        for name in ("owned", "copy_count", "location", "shelf_box", "loaned_to", "local_notes"):
+            self.assertIn(f'name="{name}"', body)
+
+    def test_save_updates_local_fields_and_confirms(self) -> None:
+        body = self.client.post(
+            "/book/1/local",
+            data={"owned": "true", "copy_count": "2", "location": "Office",
+                  "shelf_box": "A1", "loaned_to": "Sam", "local_notes": "Signed"},
+        ).text
+        self.assertIn("Saved", body)
+        self.assertIn("Office", body)
+        conn = db.connect(self.db_path)
+        book = db.get_book_by_goodreads_id(conn, "1")
+        self.assertEqual(
+            (book["owned"], book["copy_count"], book["location"], book["loaned_to"]),
+            (1, 2, "Office", "Sam"),
+        )
+        conn.close()
+
+    def test_unchecked_owned_clears_it(self) -> None:
+        self.client.post("/book/1/local", data={"owned": "true", "copy_count": "1"})
+        self.assertEqual(self._owned(), 1)
+        # A checkbox left unchecked is simply absent from the form post.
+        self.client.post("/book/1/local", data={"copy_count": "0"})
+        self.assertEqual(self._owned(), 0)
+
+    def test_edit_missing_book_is_404(self) -> None:
+        self.assertEqual(self.client.get("/book/nope/local/edit").status_code, 404)
+
+
 if __name__ == "__main__":
     unittest.main()
