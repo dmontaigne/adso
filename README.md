@@ -1,10 +1,10 @@
-<p align="center">
-  <img src="assets/adso-logo.png" alt="Adso logo — a monk reading a book titled ADSO" width="200">
+<p align="left">
+  <img src="assets/adso-logo.png" alt="Adso logo" width="200">
 </p>
 
 # Adso
 
-<p align="center">
+<p align="left">
   <a href="https://github.com/dmontaigne/adso/actions/workflows/ci.yml"><img src="https://github.com/dmontaigne/adso/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/python-3.9%2B-blue.svg" alt="Python 3.9+">
