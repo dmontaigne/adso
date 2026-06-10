@@ -24,8 +24,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **latest-sync status card** on the Activity page linking to them.
 - `exports.catalogue_csv_string` / `catalogue_json_string` (in-memory
   serializers reused by the file exports and the web downloads).
-
-### Added
 - **Local tags**: group books your own way (e.g. `philosophy`) with
   comma-separated tags on the book page or `adso edit --tags`. Tags are
   local-only (never synced), searchable, filterable in the catalogue and via
