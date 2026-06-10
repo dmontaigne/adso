@@ -251,7 +251,7 @@ class AdsoCoreTests(unittest.TestCase):
         db.update_local_fields(
             self.conn,
             "1",
-            {"owned": 1, "copy_count": 1, "location": "Office", "shelf_box": "A1"},
+            {"format": "physical", "loaned_to": "Sam", "local_notes": "Signed"},
         )
 
         changed_path = self.root / "goodreads-changed.csv"
@@ -259,11 +259,23 @@ class AdsoCoreTests(unittest.TestCase):
         import_goodreads_csv(self.conn, changed_path, mode="sync")
         book = self.conn.execute("SELECT * FROM books WHERE goodreads_id = '1'").fetchone()
 
-        self.assertEqual(book["owned"], 1)
-        self.assertEqual(book["copy_count"], 1)
-        self.assertEqual(book["location"], "Office")
-        self.assertEqual(book["shelf_box"], "A1")
+        self.assertEqual(book["format"], "physical")
+        self.assertEqual(book["loaned_to"], "Sam")
+        self.assertEqual(book["local_notes"], "Signed")
         self.assertEqual(book["rating"], 5)
+
+    def test_update_local_fields_validates_format(self) -> None:
+        csv_path = self.root / "goodreads.csv"
+        write_goodreads_csv(csv_path, [row()])
+        import_goodreads_csv(self.conn, csv_path, mode="import")
+
+        with self.assertRaises(ValueError):
+            db.update_local_fields(self.conn, "1", {"format": "hardcover"})
+
+        for value in (*db.VALID_FORMATS, None):
+            db.update_local_fields(self.conn, "1", {"format": value})
+            book = self.conn.execute("SELECT format FROM books WHERE goodreads_id = '1'").fetchone()
+            self.assertEqual(book["format"], value)
 
     def test_conflict_report_when_local_activity_field_changed(self) -> None:
         csv_path = self.root / "goodreads.csv"
@@ -353,6 +365,10 @@ class AdsoCoreTests(unittest.TestCase):
         self.assertIn("publisher", csv_text)
         self.assertIn("Harvest Books", csv_text)
         self.assertIn("original_publication_year", csv_text)
+        header = csv_text.splitlines()[0].split(",")
+        self.assertIn("format", header)
+        for dropped in ("owned", "copy_count", "location", "shelf_box"):
+            self.assertNotIn(dropped, header)
 
     def test_catalogue_string_serializers_back_file_exports(self) -> None:
         from adso.exports import catalogue_csv_string, catalogue_json_string
@@ -583,12 +599,11 @@ class AdsoCoreTests(unittest.TestCase):
             ],
         )
         import_goodreads_csv(self.conn, csv_path, mode="import")
-        db.update_local_fields(self.conn, "2", {"owned": 1, "location": "Office"})
+        db.update_local_fields(self.conn, "2", {"format": "physical"})
 
         all_books = list_books(self.conn)
         read_books = list_books(self.conn, BookFilters(status="Read"))
-        owned_books = list_books(self.conn, BookFilters(owned=True))
-        office_books = list_books(self.conn, BookFilters(location="off"))
+        physical_books = list_books(self.conn, BookFilters(format="physical"))
         limited_books = list_books(self.conn, BookFilters(limit=2))
 
         self.assertEqual([book["title"] for book in all_books], [
@@ -597,10 +612,9 @@ class AdsoCoreTests(unittest.TestCase):
             "The Name of the Rose",
         ])
         self.assertEqual([book["goodreads_id"] for book in read_books], ["2"])
-        self.assertEqual([book["goodreads_id"] for book in owned_books], ["2"])
-        self.assertEqual([book["goodreads_id"] for book in office_books], ["2"])
+        self.assertEqual([book["goodreads_id"] for book in physical_books], ["2"])
         self.assertEqual(len(limited_books), 2)
-        self.assertIs(limited_books[0]["owned"], False)
+        self.assertIsNone(limited_books[0]["format"])
 
     def test_catalogue_query_service_searches_and_gets_books(self) -> None:
         csv_path = self.root / "goodreads.csv"
@@ -625,19 +639,21 @@ class AdsoCoreTests(unittest.TestCase):
         db.update_local_fields(
             self.conn,
             "2",
-            {"owned": 1, "location": "Office", "shelf_box": "Shelf B", "local_notes": "Lending copy"},
+            {"format": "physical", "loaned_to": "Sam", "local_notes": "Lending copy"},
         )
 
         search_results = search_books(self.conn, "winter")
-        filtered_results = search_books(self.conn, "novel", BookFilters(owned=True))
+        filtered_results = search_books(self.conn, "novel", BookFilters(format="physical"))
         field_searches = {
             "title": search_books(self.conn, "darkness"),
             "author": search_books(self.conn, "guin"),
             "isbn": search_books(self.conn, "9780156001311"),
             "shelves": search_books(self.conn, "science"),
             "local_notes": search_books(self.conn, "lending"),
-            "location": search_books(self.conn, "office"),
-            "shelf_box": search_books(self.conn, "shelf"),
+            "loaned_to": search_books(self.conn, "sam"),
+            # format is deliberately not indexed: searching a format name
+            # shouldn't match every owned book — that's what the filter is for.
+            "format": search_books(self.conn, "physical"),
         }
         book = get_book(self.conn, "2")
         missing = get_book(self.conn, "missing")
@@ -649,19 +665,19 @@ class AdsoCoreTests(unittest.TestCase):
         self.assertEqual([result["goodreads_id"] for result in field_searches["isbn"]], ["1"])
         self.assertEqual([result["goodreads_id"] for result in field_searches["shelves"]], ["2"])
         self.assertEqual([result["goodreads_id"] for result in field_searches["local_notes"]], ["2"])
-        self.assertEqual([result["goodreads_id"] for result in field_searches["location"]], ["2"])
-        self.assertEqual([result["goodreads_id"] for result in field_searches["shelf_box"]], ["2"])
+        self.assertEqual([result["goodreads_id"] for result in field_searches["loaned_to"]], ["2"])
+        self.assertEqual(field_searches["format"], [])
         self.assertEqual(book["title"], "The Left Hand of Darkness")
         self.assertEqual(book["shelves"], ["fiction", "science-fiction"])
-        self.assertTrue(book["owned"])
-        self.assertEqual(book["location"], "Office")
+        self.assertEqual(book["format"], "physical")
+        self.assertEqual(book["loaned_to"], "Sam")
         self.assertIsNone(missing)
 
     def test_search_uses_fts5_when_available(self) -> None:
         with patch("adso.catalogue._fts_index_available", return_value=True), patch(
             "adso.catalogue._search_books_fts", return_value=[{"goodreads_id": "fts"}]
         ) as fts_search:
-            results = search_books(self.conn, "winter", BookFilters(owned=True))
+            results = search_books(self.conn, "winter", BookFilters(format="physical"))
 
         self.assertEqual(results, [{"goodreads_id": "fts"}])
         fts_search.assert_called_once()
@@ -743,18 +759,17 @@ class AdsoCoreTests(unittest.TestCase):
         )
         _run_cli(["--db", str(db_path), "import", "goodreads", str(csv_path)])
         conn = db.connect(db_path)
-        db.update_local_fields(conn, "2", {"owned": 1, "location": "Office"})
+        db.update_local_fields(conn, "2", {"format": "physical"})
         conn.close()
 
         output = _run_cli(["--db", str(db_path), "list"])
-        filtered = _run_cli(["--db", str(db_path), "list", "--owned", "true", "--location", "office"])
+        filtered = _run_cli(["--db", str(db_path), "list", "--format", "physical"])
         no_match = _run_cli(["--db", str(db_path), "list", "--status", "Currently Reading"])
 
         self.assertIn("Goodreads ID", output)
         self.assertIn("The Left Hand of Darkness", output)
         self.assertIn("The Name of the Rose", output)
-        self.assertIn("Office", filtered)
-        self.assertIn("yes", filtered)
+        self.assertIn("physical", filtered)
         self.assertNotIn("The Name of the Rose", filtered)
         self.assertEqual(no_match.strip(), "No books found.")
 
@@ -778,15 +793,15 @@ class AdsoCoreTests(unittest.TestCase):
         )
         _run_cli(["--db", str(db_path), "import", "goodreads", str(csv_path)])
         conn = db.connect(db_path)
-        db.update_local_fields(conn, "2", {"owned": 1, "location": "Office", "local_notes": "Lending copy"})
+        db.update_local_fields(conn, "2", {"format": "ebook", "local_notes": "Lending copy"})
         conn.close()
 
-        output = _run_cli(["--db", str(db_path), "search", "winter", "--owned", "true", "--limit", "1"])
+        output = _run_cli(["--db", str(db_path), "search", "winter", "--format", "ebook", "--limit", "1"])
         no_match = _run_cli(["--db", str(db_path), "search", "winter", "--author", "Eco"])
 
         self.assertIn("Goodreads ID", output)
         self.assertIn("The Left Hand of Darkness", output)
-        self.assertIn("Office", output)
+        self.assertIn("ebook", output)
         self.assertNotIn("The Name of the Rose", output)
         self.assertEqual(no_match.strip(), "No books found.")
 
@@ -799,7 +814,7 @@ class AdsoCoreTests(unittest.TestCase):
         db.update_local_fields(
             conn,
             "1",
-            {"owned": 1, "copy_count": 1, "location": "Office", "shelf_box": "A1", "local_notes": "Keeper"},
+            {"format": "physical", "loaned_to": "Sam", "local_notes": "Keeper"},
         )
         conn.close()
 
@@ -813,8 +828,8 @@ class AdsoCoreTests(unittest.TestCase):
         self.assertIn("Binding: Paperback", output)
         self.assertIn("Number of Pages: 536", output)
         self.assertIn("Original Publication Year: 1980", output)
-        self.assertIn("Owned: yes", output)
-        self.assertIn("Shelf/Box: A1", output)
+        self.assertIn("Format: physical", output)
+        self.assertIn("Loaned To: Sam", output)
         with self.assertRaises(SystemExit) as raised:
             _run_cli(["--db", str(db_path), "show", "missing"])
         self.assertEqual(raised.exception.code, 2)
@@ -928,6 +943,110 @@ class AdsoCoreTests(unittest.TestCase):
         self.assertIn("Notion dry-run complete: 1 would be created, 1 would be updated, 0 errors", output)
         self.assertIn("Would create: The Name of the Rose (Goodreads ID 1)", output)
         self.assertIn("Would update: The Left Hand of Darkness (Goodreads ID 2)", output)
+
+
+class LocalFieldsFormatMigrationTests(unittest.TestCase):
+    """Upgrading a catalogue created before local fields were simplified."""
+
+    LEGACY_LOCAL_COLUMNS = ("owned", "copy_count", "location", "shelf_box")
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.conn = db.connect(self.root / "adso.sqlite")
+        db.initialize(self.conn)
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _book_columns(self) -> set[str]:
+        return {r["name"] for r in self.conn.execute("PRAGMA table_info(books)")}
+
+    def _make_legacy_schema(self) -> None:
+        """Rebuild the pre-format shape: old local columns + FTS triggers over them."""
+        self.conn.executescript(
+            """
+            DROP TRIGGER IF EXISTS books_fts_ai;
+            DROP TRIGGER IF EXISTS books_fts_ad;
+            DROP TRIGGER IF EXISTS books_fts_au;
+            DROP TABLE IF EXISTS books_fts;
+            ALTER TABLE books DROP COLUMN format;
+            ALTER TABLE books ADD COLUMN owned INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE books ADD COLUMN copy_count INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE books ADD COLUMN location TEXT;
+            ALTER TABLE books ADD COLUMN shelf_box TEXT;
+            """
+        )
+        legacy_fields = (*db.SEARCH_FIELDS, "location", "shelf_box")
+        cols = ", ".join(legacy_fields)
+        new_values = ", ".join(f"new.{f}" for f in legacy_fields)
+        old_values = ", ".join(f"old.{f}" for f in legacy_fields)
+        self.conn.executescript(
+            f"""
+            CREATE VIRTUAL TABLE books_fts USING fts5(
+                {cols}, content='books', content_rowid='id'
+            );
+            CREATE TRIGGER books_fts_ai AFTER INSERT ON books BEGIN
+                INSERT INTO books_fts (rowid, {cols}) VALUES (new.id, {new_values});
+            END;
+            CREATE TRIGGER books_fts_ad AFTER DELETE ON books BEGIN
+                INSERT INTO books_fts (books_fts, rowid, {cols})
+                VALUES ('delete', old.id, {old_values});
+            END;
+            CREATE TRIGGER books_fts_au AFTER UPDATE ON books BEGIN
+                INSERT INTO books_fts (books_fts, rowid, {cols})
+                VALUES ('delete', old.id, {old_values});
+                INSERT INTO books_fts (rowid, {cols}) VALUES (new.id, {new_values});
+            END;
+            """
+        )
+        self.conn.execute("INSERT INTO books_fts (books_fts) VALUES ('rebuild')")
+        self.conn.commit()
+
+    def test_legacy_catalogue_migrates_to_format(self) -> None:
+        self._make_legacy_schema()
+        self.conn.execute(
+            """
+            INSERT INTO books (goodreads_id, title, author, owned, copy_count,
+                               location, shelf_box, loaned_to)
+            VALUES ('1', 'The Dispossessed', 'Ursula K. Le Guin', 1, 2,
+                    'Office', 'A1', 'Sam')
+            """
+        )
+        self.conn.commit()
+
+        db.initialize(self.conn)
+
+        columns = self._book_columns()
+        self.assertIn("format", columns)
+        for column in self.LEGACY_LOCAL_COLUMNS:
+            self.assertNotIn(column, columns)
+        book = self.conn.execute("SELECT * FROM books WHERE goodreads_id = '1'").fetchone()
+        self.assertIsNone(book["format"])
+        self.assertEqual(book["loaned_to"], "Sam")
+
+        # The FTS index was rebuilt over the new SEARCH_FIELDS: searching still
+        # works, and updates don't trip triggers referencing dropped columns.
+        self.assertEqual(
+            [b["goodreads_id"] for b in search_books(self.conn, "sam")], ["1"]
+        )
+        db.update_local_fields(self.conn, "1", {"format": "physical"})
+        self.assertEqual(
+            self.conn.execute("SELECT format FROM books WHERE goodreads_id = '1'").fetchone()[0],
+            "physical",
+        )
+
+    def test_initialize_is_idempotent_on_current_schema(self) -> None:
+        before = self._book_columns()
+        db.initialize(self.conn)
+        db.initialize(self.conn)
+        self.assertEqual(self._book_columns(), before)
+        self.assertIsNotNone(
+            self.conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='books_fts'"
+            ).fetchone()
+        )
 
 
 def _run_cli(argv: list[str]) -> str:

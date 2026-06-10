@@ -83,7 +83,7 @@ For a pinned, reproducible environment, run `pip install -r requirements-lock.tx
 
 - **SQLite is canonical** — your local catalogue is the source of truth.
 - **Goodreads CSV exports** are preserved raw and normalized into the catalogue.
-- **Your local fields** (owned, location, shelf, loaned-to, notes) are protected during sync.
+- **Your local fields** (format, loaned-to, notes) are protected during sync.
 - **Goodreads updates apply safely** only when your local value hasn't changed since the last sync — otherwise the change is held as a conflict rather than silently overwriting your data.
 - **Cosmetic drift is ignored** — community ratings, edition relabels, ISBNs, page counts, and title casing refresh quietly, while real title/author changes stay tracked.
 
@@ -94,10 +94,10 @@ adso init                                  # create the catalogue
 adso doctor                                # check setup, suggest next steps
 adso import goodreads path/to/export.csv   # first load (alias of sync)
 adso sync goodreads path/to/export.csv     # later refreshes (same safe operation)
-adso list --owned true --location Office   # browse, with filters
+adso list --status Read --format physical  # browse, with filters
 adso search "winter society" --limit 10
 adso show GOODREADS_ID
-adso edit GOODREADS_ID --owned true --location Office --shelf-box A1
+adso edit GOODREADS_ID --format physical --loaned-to "Sam"
 adso conflicts                             # list open conflicts (--all shows decided ones too)
 adso resolve CONFLICT_ID --accept-incoming # or --keep-local / --set / --ignore / --review-later / --reopen
 adso report summary --output reports/summary.md

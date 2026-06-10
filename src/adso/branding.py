@@ -34,7 +34,7 @@ COMMAND_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
             ("list", "Browse books in the catalogue"),
             ("search", "Find a book"),
             ("show", "Show details for one book"),
-            ("edit", "Update shelf / location / owned fields"),
+            ("edit", "Update format / loaned-to / notes fields"),
         ],
     ),
     (
@@ -69,7 +69,7 @@ GLOBAL_OPTIONS: list[tuple[str, str]] = [
 EXAMPLES: list[str] = [
     "adso init",
     "adso import goodreads ~/Downloads/goodreads_library_export.csv",
-    "adso list --status 'Read' --owned true",
+    "adso list --status 'Read' --format physical",
     "adso serve",
 ]
 

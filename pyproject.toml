@@ -46,6 +46,8 @@ web = [
 ]
 dev = [
   "ruff>=0.4",
+  # TestClient needs httpx; without it the web-surface tests silently skip.
+  "httpx>=0.27",
 ]
 
 [project.urls]

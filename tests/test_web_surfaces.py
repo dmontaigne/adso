@@ -124,9 +124,9 @@ class BookLocalEditWebTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def _owned(self) -> int:
+    def _format(self) -> str | None:
         conn = db.connect(self.db_path)
-        value = db.get_book_by_goodreads_id(conn, "1")["owned"]
+        value = db.get_book_by_goodreads_id(conn, "1")["format"]
         conn.close()
         return value
 
@@ -138,31 +138,39 @@ class BookLocalEditWebTests(unittest.TestCase):
 
     def test_edit_form_renders_all_fields(self) -> None:
         body = self.client.get("/book/1/local/edit").text
-        for name in ("owned", "copy_count", "location", "shelf_box", "loaned_to", "local_notes"):
+        for name in ("format", "loaned_to", "local_notes"):
             self.assertIn(f'name="{name}"', body)
+        for value in ("physical", "ebook", "audiobook"):
+            self.assertIn(f'value="{value}"', body)
 
     def test_save_updates_local_fields_and_confirms(self) -> None:
         body = self.client.post(
             "/book/1/local",
-            data={"owned": "true", "copy_count": "2", "location": "Office",
-                  "shelf_box": "A1", "loaned_to": "Sam", "local_notes": "Signed"},
+            data={"format": "ebook", "loaned_to": "Sam", "local_notes": "Signed"},
         ).text
         self.assertIn("Saved", body)
-        self.assertIn("Office", body)
+        self.assertIn("Ebook", body)
         conn = db.connect(self.db_path)
         book = db.get_book_by_goodreads_id(conn, "1")
         self.assertEqual(
-            (book["owned"], book["copy_count"], book["location"], book["loaned_to"]),
-            (1, 2, "Office", "Sam"),
+            (book["format"], book["loaned_to"], book["local_notes"]),
+            ("ebook", "Sam", "Signed"),
         )
         conn.close()
 
-    def test_unchecked_owned_clears_it(self) -> None:
-        self.client.post("/book/1/local", data={"owned": "true", "copy_count": "1"})
-        self.assertEqual(self._owned(), 1)
-        # A checkbox left unchecked is simply absent from the form post.
-        self.client.post("/book/1/local", data={"copy_count": "0"})
-        self.assertEqual(self._owned(), 0)
+    def test_empty_format_clears_to_not_owned(self) -> None:
+        self.client.post("/book/1/local", data={"format": "physical"})
+        self.assertEqual(self._format(), "physical")
+        # The blank "— Not owned" option posts an empty string.
+        self.client.post("/book/1/local", data={"format": ""})
+        self.assertIsNone(self._format())
+
+    def test_invalid_format_shows_error_and_keeps_value(self) -> None:
+        self.client.post("/book/1/local", data={"format": "physical"})
+        body = self.client.post("/book/1/local", data={"format": "hardcover"}).text
+        self.assertIn("alert-destructive", body)
+        self.assertIn("Unsupported format", body)
+        self.assertEqual(self._format(), "physical")
 
     def test_edit_missing_book_is_404(self) -> None:
         self.assertEqual(self.client.get("/book/nope/local/edit").status_code, 404)

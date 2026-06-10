@@ -8,6 +8,8 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from .errors import AdsoError
+
 GOODREADS_FIELDS = (
     "title",
     "author",
@@ -33,13 +35,16 @@ GOODREADS_FIELDS = (
 )
 
 LOCAL_FIELDS = (
-    "owned",
-    "copy_count",
-    "location",
-    "shelf_box",
+    "format",
     "loaned_to",
     "local_notes",
 )
+
+# Allowed values for the local `format` field. A set format means "I own this
+# book in that form"; NULL means not owned. Kept deliberately separate from the
+# Goodreads `binding` field, which describes the catalogued edition rather than
+# what's actually on the shelf.
+VALID_FORMATS = ("physical", "ebook", "audiobook")
 
 # Columns indexed for full-text search. These back both the persistent FTS5
 # index (see _migrate_search_fts) and the LIKE fallback in adso.catalogue, so
@@ -60,8 +65,6 @@ SEARCH_FIELDS = (
     "shelves_json",
     "my_review",
     "private_notes",
-    "location",
-    "shelf_box",
     "loaned_to",
     "local_notes",
 )
@@ -123,10 +126,7 @@ def initialize(conn: sqlite3.Connection) -> None:
             private_notes TEXT,
             read_count INTEGER,
             owned_copies INTEGER,
-            owned INTEGER NOT NULL DEFAULT 0,
-            copy_count INTEGER NOT NULL DEFAULT 0,
-            location TEXT,
-            shelf_box TEXT,
+            format TEXT,
             loaned_to TEXT,
             local_notes TEXT,
             cover_path TEXT,
@@ -212,6 +212,7 @@ def initialize(conn: sqlite3.Connection) -> None:
     _migrate_sync_conflicts(conn)
     _migrate_book_covers(conn)
     _migrate_conflict_decisions(conn)
+    _migrate_local_fields_format(conn)
     _migrate_search_fts(conn)
     conn.commit()
 
@@ -273,6 +274,39 @@ def _migrate_conflict_decisions(conn: sqlite3.Connection) -> None:
             """,
             (row["id"], row["resolution"], resulting_value, row["resolved_at"]),
         )
+
+
+def _migrate_local_fields_format(conn: sqlite3.Connection) -> None:
+    """Replace owned/copy_count/location/shelf_box with a single format column.
+
+    The local panel was simplified to format/loaned_to/local_notes; data in the
+    dropped columns is discarded by design. The FTS triggers reference the old
+    columns and SQLite refuses to drop a column a trigger mentions, so the index
+    and triggers go first — _migrate_search_fts (which runs after this) rebuilds
+    them from the current SEARCH_FIELDS.
+    """
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(books)")}
+    to_drop = [c for c in ("owned", "copy_count", "location", "shelf_box") if c in existing]
+    if "format" in existing and not to_drop:
+        return
+    conn.executescript(
+        """
+        DROP TRIGGER IF EXISTS books_fts_ai;
+        DROP TRIGGER IF EXISTS books_fts_ad;
+        DROP TRIGGER IF EXISTS books_fts_au;
+        DROP TABLE IF EXISTS books_fts;
+        """
+    )
+    if "format" not in existing:
+        conn.execute("ALTER TABLE books ADD COLUMN format TEXT")
+    for column in to_drop:
+        try:
+            conn.execute(f"ALTER TABLE books DROP COLUMN {column}")
+        except sqlite3.OperationalError as exc:
+            raise AdsoError(
+                f"Could not migrate the catalogue schema (dropping books.{column}): {exc}",
+                hint="Adso needs SQLite 3.35 or newer to upgrade this catalogue.",
+            ) from exc
 
 
 def _sqlite_has_fts5(conn: sqlite3.Connection) -> bool:
@@ -490,6 +524,11 @@ def update_local_fields(
     invalid = [field for field in updates if field not in LOCAL_FIELDS]
     if invalid:
         raise ValueError(f"Unsupported local fields: {', '.join(invalid)}")
+    if "format" in updates and updates["format"] not in (None, *VALID_FORMATS):
+        raise ValueError(
+            f"Unsupported format {updates['format']!r}; "
+            f"expected one of {', '.join(VALID_FORMATS)}, or empty for not owned"
+        )
     if not updates:
         return
     book = get_book_by_goodreads_id(conn, goodreads_id)
@@ -752,10 +791,7 @@ def deferred_conflict_count(conn: sqlite3.Connection) -> int:
 # Default values that mean "no local enrichment set" for each local field, used
 # when merging duplicates to decide whether the keeper already has a value.
 _LOCAL_FIELD_EMPTY = {
-    "owned": 0,
-    "copy_count": 0,
-    "location": None,
-    "shelf_box": None,
+    "format": None,
     "loaned_to": None,
     "local_notes": None,
 }
@@ -793,7 +829,7 @@ def list_duplicate_links(
     return conn.execute(
         f"""
         SELECT d.*, b.title, b.author, b.goodreads_id, b.reading_status,
-               b.location, b.owned, b.local_notes, b.shelf_box, b.loaned_to,
+               b.format, b.loaned_to, b.local_notes,
                b.cover_path, b.last_goodreads_import_run_id
         FROM duplicate_links d
         JOIN books b ON b.id = d.book_id

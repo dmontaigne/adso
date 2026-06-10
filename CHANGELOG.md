@@ -8,9 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Web UI: edit your **local catalogue fields** (owned, copy count, location,
-  shelf/box, loaned-to, notes) inline on a book's page — local-only, never synced
-  to Goodreads.
+- Web UI: edit your **local catalogue fields** inline on a book's page —
+  local-only, never synced to Goodreads.
 - Conflict decisions now support **ignore** and **review-later** alongside
   keep-local / accept-incoming / custom, and any decision can be **reopened**.
 - Every decision is recorded in an append-only audit trail with provenance
@@ -27,6 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   serializers reused by the file exports and the web downloads).
 
 ### Changed
+- **Local catalogue fields simplified** to `format` (physical / ebook /
+  audiobook — set means owned, empty means not owned), `loaned_to`, and
+  `local_notes`. The `owned`, `copy_count`, `location`, and `shelf_box` columns
+  are dropped from the schema (existing catalogues migrate automatically; any
+  values in the dropped columns are discarded). The catalogue's owned/location
+  filters, `adso list/search --owned/--location`, and
+  `adso edit --owned/--copy-count/--location/--shelf-box` are replaced by
+  `--format`, and the Notion export now writes a `Format` select property
+  instead of Owned / Location / Shelf-Box.
 - `import` and `sync` are now documented as the same safe, idempotent operation,
   and `import` writes a conflict report just like `sync` (previously it could
   record conflicts silently).

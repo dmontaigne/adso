@@ -30,7 +30,6 @@ from .. import reports as reports_service
 from .. import sync as sync_service
 from ..catalogue import (
     BookFilters,
-    distinct_locations,
     distinct_statuses,
     get_book,
     list_books,
@@ -119,18 +118,13 @@ def create_app(db_path: str | Path, *, config: ResolvedConfig | None = None) -> 
 
     def _filters(
         status: str | None,
-        owned: str | None,
-        location: str | None,
+        format: str | None,
         author: str | None,
         limit: int | None,
     ) -> BookFilters:
-        owned_bool = None
-        if owned in ("true", "false"):
-            owned_bool = owned == "true"
         return BookFilters(
             status=status or None,
-            owned=owned_bool,
-            location=location or None,
+            format=format if format in db.VALID_FORMATS else None,
             author=author or None,
             limit=limit,
         )
@@ -150,12 +144,11 @@ def create_app(db_path: str | Path, *, config: ResolvedConfig | None = None) -> 
         conn: sqlite3.Connection = Depends(get_conn),
         q: str = Query("", description="Search query"),
         status: str | None = Query(None),
-        owned: str | None = Query(None),
-        location: str | None = Query(None),
+        format: str | None = Query(None),
         author: str | None = Query(None),
         limit: int | None = Query(None, ge=1),
     ) -> HTMLResponse:
-        filters = _filters(status, owned, location, author, limit)
+        filters = _filters(status, format, author, limit)
         books = _query_books(conn, q, filters)
         return templates.TemplateResponse(
             request,
@@ -164,11 +157,10 @@ def create_app(db_path: str | Path, *, config: ResolvedConfig | None = None) -> 
                 "books": books,
                 "q": q,
                 "status": status or "",
-                "owned": owned or "",
-                "location": location or "",
+                "format": format or "",
                 "author": author or "",
                 "statuses": distinct_statuses(conn),
-                "locations": distinct_locations(conn),
+                "formats": db.VALID_FORMATS,
                 "count": len(books),
                 "pending_count": conflicts_service.pending_count(conn),
                 "duplicate_count": dedupe_service.pending_count(conn),
@@ -233,28 +225,19 @@ def create_app(db_path: str | Path, *, config: ResolvedConfig | None = None) -> 
         request: Request,
         goodreads_id: str,
         conn: sqlite3.Connection = Depends(get_conn),
-        owned: str | None = Form(None),
-        copy_count: str | None = Form(None),
-        location: str | None = Form(None),
-        shelf_box: str | None = Form(None),
+        format: str | None = Form(None),
         loaned_to: str | None = Form(None),
         local_notes: str | None = Form(None),
     ) -> HTMLResponse:
         # These are all LOCAL_FIELDS, which sync never touches, so editing them is
-        # always safe — db.update_local_fields enforces that boundary.
+        # always safe — db.update_local_fields enforces that boundary (including
+        # rejecting unknown format values).
         def _clean(value: str | None) -> str | None:
             value = (value or "").strip()
             return value or None
 
-        try:
-            count = max(0, int(copy_count)) if (copy_count or "").strip() else 0
-        except ValueError:
-            count = 0
         updates = {
-            "owned": 1 if (owned or "").lower() in ("true", "on", "1") else 0,
-            "copy_count": count,
-            "location": _clean(location),
-            "shelf_box": _clean(shelf_box),
+            "format": _clean(format),
             "loaned_to": _clean(loaned_to),
             "local_notes": (local_notes or "").strip() or None,
         }
@@ -289,12 +272,11 @@ def create_app(db_path: str | Path, *, config: ResolvedConfig | None = None) -> 
         conn: sqlite3.Connection = Depends(get_conn),
         q: str = Query("", description="Search query"),
         status: str | None = Query(None),
-        owned: str | None = Query(None),
-        location: str | None = Query(None),
+        format: str | None = Query(None),
         author: str | None = Query(None),
         limit: int | None = Query(None, ge=1),
     ) -> dict:
-        filters = _filters(status, owned, location, author, limit)
+        filters = _filters(status, format, author, limit)
         books = _query_books(conn, q, filters)
         return {"count": len(books), "books": books}
 

@@ -10,21 +10,14 @@
           hx-target="#local-card"
           hx-swap="outerHTML"
           class="grid gap-3 text-sm">
-      <label class="flex items-center gap-2">
-        <input type="checkbox" name="owned" value="true" {% if book.owned %}checked{% endif %}>
-        <span>Owned</span>
-      </label>
       <label class="grid gap-1">
-        <span class="text-muted-foreground">Copy count</span>
-        <input class="input" type="number" name="copy_count" min="0" value="{{ book.copy_count }}">
-      </label>
-      <label class="grid gap-1">
-        <span class="text-muted-foreground">Location</span>
-        <input class="input" type="text" name="location" value="{{ book.location or '' }}">
-      </label>
-      <label class="grid gap-1">
-        <span class="text-muted-foreground">Shelf / box</span>
-        <input class="input" type="text" name="shelf_box" value="{{ book.shelf_box or '' }}">
+        <span class="text-muted-foreground">Format</span>
+        <select class="input" name="format">
+          <option value="" {% if not book["format"] %}selected{% endif %}>— Not owned</option>
+          <option value="physical" {% if book["format"] == "physical" %}selected{% endif %}>Physical</option>
+          <option value="ebook" {% if book["format"] == "ebook" %}selected{% endif %}>Ebook</option>
+          <option value="audiobook" {% if book["format"] == "audiobook" %}selected{% endif %}>Audiobook</option>
+        </select>
       </label>
       <label class="grid gap-1">
         <span class="text-muted-foreground">Loaned to</span>

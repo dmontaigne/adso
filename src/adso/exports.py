@@ -25,10 +25,7 @@ EXPORT_FIELDS = [
     "date_read",
     "date_added",
     "shelves",
-    "owned",
-    "copy_count",
-    "location",
-    "shelf_box",
+    "format",
     "loaned_to",
     "local_notes",
 ]
