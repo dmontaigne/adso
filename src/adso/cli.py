@@ -7,10 +7,11 @@ import sqlite3
 import sys
 from pathlib import Path
 
+from . import __version__, branding, db
 from . import config as config_module
 from . import conflicts as conflicts_service
-from . import db
 from . import dedupe as dedupe_service
+from . import doctor as doctor_module
 from .catalogue import BookFilters, get_book, list_books, search_books
 from .config import DEFAULT_DB, ResolvedConfig
 from .covers import CoversError, fetch_covers, set_manual_cover
@@ -30,6 +31,8 @@ from .sync import import_goodreads_csv
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
+    if args.command is None:
+        return _welcome(args, parser)
     try:
         return _dispatch(args, parser)
     except AdsoError as exc:
@@ -48,6 +51,25 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("Cancelled.", file=sys.stderr)
         return 130
+
+
+def _welcome(args, parser) -> int:
+    """Greet a bare `adso` invocation: quickstart for new users, help otherwise."""
+    cfg = config_module.load(db_arg=args.db, profile_arg=args.profile)
+    db_state = doctor_module._inspect_database(Path(cfg.db_path))
+    config_present = (
+        config_module.project_config_path().exists()
+        or config_module.user_config_path().exists()
+    )
+
+    first_run = not db_state["exists"] and not config_present
+    if first_run:
+        csv_files = doctor_module._find_goodreads_csvs(Path.cwd())
+        csv_hint = csv_files[0] if csv_files else None
+        print(branding.render_welcome(csv_hint=csv_hint))
+    else:
+        print(branding.render_help(parser.prog))
+    return 0
 
 
 def _fail(error: object, *, hint: str | None = None) -> int:
@@ -267,8 +289,18 @@ def _run_server(
     return 0
 
 
+class _BrandedParser(argparse.ArgumentParser):
+    """Top-level parser whose `--help` renders the branded Adso help screen.
+
+    Subparsers stay vanilla, so `adso <command> --help` keeps argparse's detail.
+    """
+
+    def format_help(self) -> str:
+        return branding.render_help(self.prog) + "\n"
+
+
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Adso local-first book catalogue")
+    parser = _BrandedParser(prog="adso", description="Adso local-first book catalogue")
     parser.add_argument(
         "--db",
         default=None,
@@ -279,7 +311,15 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Configuration profile to use (see `adso config`)",
     )
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"adso {__version__}",
+        help="Show the Adso version and exit",
+    )
+    subparsers = parser.add_subparsers(
+        dest="command", required=False, parser_class=argparse.ArgumentParser
+    )
 
     subparsers.add_parser("init", help="Initialize the local catalogue database")
     subparsers.add_parser("doctor", help="Check local Adso setup and suggest next commands")
