@@ -89,6 +89,30 @@ class MetadataHelperTests(unittest.TestCase):
         self.assertEqual(len(_clean_subjects(many, cap=SUBJECTS_CAP)), SUBJECTS_CAP)
         self.assertEqual(_clean_subjects("not-a-list", cap=PLACES_CAP), [])
 
+    def test_clean_subjects_drops_non_english_tags(self) -> None:
+        # OL aggregates subjects across translated editions; foreign duplicates
+        # are dropped by the non-ASCII check, the foreign-word set, or the
+        # Spanish century pattern.
+        raw = [
+            "Biografía",          # non-ASCII
+            "França",             # non-ASCII
+            "14e siècle",         # non-ASCII
+            "Noblesse",           # foreign word
+            "Kultur",             # foreign word
+            "Histoire",           # foreign word
+            "France, histoire",   # foreign word inside a phrase
+            "S. XIV",             # Spanish century code
+            "s.XV",               # Spanish century code, no space
+            "Nobility",
+            "Middle Ages",
+            "Roman Empire",       # must survive: 'roman' is not in the word set
+            "Mass media",         # must survive: 'media' is not in the word set
+        ]
+        self.assertEqual(
+            _clean_subjects(raw, cap=25),
+            ["Nobility", "Middle Ages", "Roman Empire", "Mass media"],
+        )
+
 
 class MetadataFetchTests(unittest.TestCase):
     def setUp(self) -> None:

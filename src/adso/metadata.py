@@ -57,6 +57,42 @@ _JUNK_SUBJECT_RE = re.compile(r"^(nyt:|award:|collection:)")
 # Sentence-length classification strings aren't badges; drop them.
 _MAX_SUBJECT_LENGTH = 60
 
+# Open Library aggregates subjects across every translated edition of a work,
+# so popular books carry French/Spanish/German/Catalan duplicates (Noblesse,
+# Biografía, Kultur, "S. XIV"). Heuristic English-only filter: any non-ASCII
+# letter, any word from this curated foreign-term set, or a Spanish/Catalan
+# century code drops the tag. Imperfect by design — rare English subjects with
+# accents are sacrificed for a clean badge list.
+_FOREIGN_SUBJECT_WORDS = frozenset(
+    {
+        # history / biography / nobility
+        "histoire", "geschichte", "geschiedenis", "historia", "storia",
+        "biographie", "biografia", "biographien",
+        "noblesse", "nobleza", "noblesa",
+        # culture / literature / philosophy
+        "kultur", "cultura", "culturele",
+        "literatura", "letteratura", "literatur",
+        "philosophie", "filosofia", "filosofie",
+        "novela", "romanzo",
+        # periods (words like "roman" or "media" are deliberately absent —
+        # they'd false-positive on Roman Empire / mass media)
+        "siglo", "segle", "jahrhundert", "secolo",
+        "moyen", "edad", "mittelalter",
+        # languages / nationalities as subject words
+        "francais", "espagnol", "castellano", "deutsch",
+    }
+)
+_SPANISH_CENTURY_RE = re.compile(r"^s\.?\s*[xvi]+\b", re.IGNORECASE)
+
+
+def _looks_english(subject: str) -> bool:
+    if any(ord(char) > 127 for char in subject):
+        return False
+    if _SPANISH_CENTURY_RE.match(subject):
+        return False
+    words = {word.strip(".,;:()") for word in subject.lower().split()}
+    return not (words & _FOREIGN_SUBJECT_WORDS)
+
 
 class MetadataError(RuntimeError):
     pass
@@ -108,6 +144,7 @@ def _clean_subjects(raw: Any, *, cap: int) -> list[str]:
             or key in _JUNK_SUBJECTS
             or _JUNK_SUBJECT_RE.match(key)
             or key in seen
+            or not _looks_english(subject)
         ):
             continue
         seen.add(key)
