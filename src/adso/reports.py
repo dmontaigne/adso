@@ -165,7 +165,7 @@ def _next_actions(run, conflicts) -> list[str]:
     if run["created_count"] and not run["updated_count"]:
         return [
             "- Spot-check the new import with `adso export csv` or `adso export json`.",
-            "- Start adding local ownership and shelf data with `adso edit`.",
+            "- Start recording which books you own (and in what format) with `adso edit`.",
         ]
     if run["updated_count"]:
         return [

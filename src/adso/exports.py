@@ -25,10 +25,8 @@ EXPORT_FIELDS = [
     "date_read",
     "date_added",
     "shelves",
-    "owned",
-    "copy_count",
-    "location",
-    "shelf_box",
+    "format",
+    "tags",
     "loaned_to",
     "local_notes",
 ]
@@ -48,6 +46,7 @@ def catalogue_csv_string(conn) -> str:
     for row in db.iter_books(conn):
         data = db.row_to_catalogue_dict(row)
         data["shelves"] = ", ".join(data["shelves"])
+        data["tags"] = ", ".join(data["tags"])
         writer.writerow({field: data.get(field) for field in EXPORT_FIELDS})
     return buffer.getvalue()
 

@@ -94,16 +94,16 @@ class DedupeTests(unittest.TestCase):
         drop = self._insert("2", "Project Hail Mary")
         # The dropped record carries local enrichment the keeper lacks.
         self.conn.execute(
-            "UPDATE books SET location = ?, owned = 1, local_notes = ? WHERE id = ?",
-            ("Office", "signed copy", drop),
+            "UPDATE books SET format = ?, loaned_to = ?, local_notes = ? WHERE id = ?",
+            ("physical", "Sam", "signed copy", drop),
         )
         self.conn.commit()
         dedupe.scan_duplicates(self.conn)
         group = dedupe.list_open_duplicates(self.conn)[0]
         dedupe.merge_duplicate(self.conn, group["group_key"], keep_id=keep)
         kept = db.get_book(self.conn, keep)
-        self.assertEqual(kept["location"], "Office")
-        self.assertEqual(kept["owned"], 1)
+        self.assertEqual(kept["format"], "physical")
+        self.assertEqual(kept["loaned_to"], "Sam")
         self.assertEqual(kept["local_notes"], "signed copy")
 
     def test_merge_cleans_child_rows_for_dropped(self) -> None:

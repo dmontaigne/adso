@@ -15,14 +15,22 @@
     <option value="{{ s }}" {{ "selected" if s == status }}>{{ s }}</option>
     {% endfor %}
   </select>
-  <select name="location" onchange="this.form.submit()" class="input w-40">
-    <option value="">All locations</option>
-    {% for loc in locations %}
-    <option value="{{ loc }}" {{ "selected" if loc == location }}>{{ loc }}</option>
+  <select name="format" onchange="this.form.submit()" class="input w-40">
+    <option value="">All formats</option>
+    {% for f in formats %}
+    <option value="{{ f }}" {{ "selected" if f == format }}>{{ f | capitalize }}</option>
     {% endfor %}
   </select>
+  {% if tags or tag %}
+  <select name="tag" onchange="this.form.submit()" class="input w-40">
+    <option value="">All tags</option>
+    {% for t in tags %}
+    <option value="{{ t }}" {{ "selected" if t == tag }}>{{ t }}</option>
+    {% endfor %}
+  </select>
+  {% endif %}
   <button type="submit" class="btn">Search</button>
-  {% if q or status or location %}
+  {% if q or status or format or tag %}
   <a href="/" class="btn-outline">Clear</a>
   {% endif %}
 </form>
@@ -81,8 +89,7 @@
           <th>Title</th>
           <th>Author</th>
           <th>Status</th>
-          <th>Owned</th>
-          <th>Location</th>
+          <th>Format</th>
         </tr>
       </thead>
       <tbody>
@@ -111,13 +118,12 @@
             {% endif %}
           </td>
           <td>
-            {% if book.owned %}
-            <span class="badge">yes</span>
+            {% if book["format"] %}
+            <span class="badge">{{ book["format"] | capitalize }}</span>
             {% else %}
-            <span class="badge-outline">no</span>
+            <span class="badge-outline">not owned</span>
             {% endif %}
           </td>
-          <td class="text-muted-foreground">{{ book.location or "" }}</td>
         </tr>
         {% endfor %}
       </tbody>

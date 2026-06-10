@@ -166,10 +166,8 @@ def _build_properties(book: dict[str, Any]) -> dict[str, Any]:
         props["Rating"] = {"number": int(book["rating"])}
     if book.get("date_read"):
         props["Date Read"] = {"date": {"start": str(book["date_read"])}}
-    if book.get("location"):
-        props["Location"] = {"rich_text": [{"text": {"content": str(book["location"])[:2000]}}]}
-    if book.get("shelf_box"):
-        props["Shelf / Box"] = {"rich_text": [{"text": {"content": str(book["shelf_box"])[:2000]}}]}
-    if book.get("owned"):
-        props["Owned"] = {"checkbox": bool(book["owned"])}
+    if book.get("format"):
+        props["Format"] = {"select": {"name": str(book["format"]).capitalize()}}
+    if book.get("tags"):
+        props["Tags"] = {"multi_select": [{"name": str(tag)} for tag in book["tags"]]}
     return props

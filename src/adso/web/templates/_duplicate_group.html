@@ -37,11 +37,11 @@
           </div>
           <p class="mt-1 line-clamp-2 text-sm font-medium">{{ book.title }}</p>
           <p class="text-xs text-muted-foreground">Goodreads ID {{ book.goodreads_id or "—" }}</p>
-          {% if book.location or book.owned or book.local_notes %}
+          {% if book["format"] or book.loaned_to or book.local_notes %}
           <p class="mt-1 text-xs text-muted-foreground">
             Local:
-            {% if book.owned %}owned{% endif %}
-            {% if book.location %}· {{ book.location }}{% endif %}
+            {% if book["format"] %}{{ book["format"] }}{% endif %}
+            {% if book.loaned_to %}· loaned to {{ book.loaned_to }}{% endif %}
             {% if book.local_notes %}· note{% endif %}
           </p>
           {% endif %}
@@ -51,7 +51,7 @@
     </div>
 
     <p class="mt-3 text-xs text-muted-foreground">
-      Local data (owned, location, notes) from the other records is folded into the one you keep.
+      Local data (format, loaned-to, notes) from the other records is folded into the one you keep.
     </p>
 
     <div class="mt-3 flex gap-2">

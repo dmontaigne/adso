@@ -333,16 +333,20 @@ def _build_parser() -> argparse.ArgumentParser:
 
     list_parser = subparsers.add_parser("list", help="List books in the local catalogue")
     list_parser.add_argument("--status", help="Filter by reading status, e.g. 'Read' or 'To Read'")
-    list_parser.add_argument("--owned", choices=["true", "false"], help="Filter by physical ownership")
-    list_parser.add_argument("--location", help="Filter by room or location")
+    list_parser.add_argument(
+        "--format", choices=["physical", "ebook", "audiobook"], help="Filter by owned format"
+    )
+    list_parser.add_argument("--tag", help="Filter by a local tag, e.g. 'philosophy'")
     list_parser.add_argument("--author", help="Filter by author")
     list_parser.add_argument("--limit", type=int, help="Maximum number of books to show")
 
     search_parser = subparsers.add_parser("search", help="Search books in the local catalogue")
     search_parser.add_argument("query", help="Search query")
     search_parser.add_argument("--status", help="Filter by reading status, e.g. 'Read' or 'To Read'")
-    search_parser.add_argument("--owned", choices=["true", "false"], help="Filter by physical ownership")
-    search_parser.add_argument("--location", help="Filter by room or location")
+    search_parser.add_argument(
+        "--format", choices=["physical", "ebook", "audiobook"], help="Filter by owned format"
+    )
+    search_parser.add_argument("--tag", help="Filter by a local tag, e.g. 'philosophy'")
     search_parser.add_argument("--author", help="Filter by author")
     search_parser.add_argument("--limit", type=int, help="Maximum number of books to show")
 
@@ -389,12 +393,16 @@ def _build_parser() -> argparse.ArgumentParser:
     set_cover_group.add_argument("--url", help="Image URL to download")
     set_cover_group.add_argument("--file", help="Path to a local image file")
 
-    edit_parser = subparsers.add_parser("edit", help="Edit local physical-library fields")
+    edit_parser = subparsers.add_parser("edit", help="Edit local library fields")
     edit_parser.add_argument("goodreads_id", help="Goodreads Book ID")
-    edit_parser.add_argument("--owned", choices=["true", "false"], help="Whether the book is physically owned")
-    edit_parser.add_argument("--copy-count", type=int, help="Number of owned copies")
-    edit_parser.add_argument("--location", help="Room or location")
-    edit_parser.add_argument("--shelf-box", help="Shelf or box")
+    edit_parser.add_argument(
+        "--format",
+        choices=["physical", "ebook", "audiobook", "none"],
+        help="Owned format ('none' clears it — not owned)",
+    )
+    edit_parser.add_argument(
+        "--tags", help="Comma-separated local tags (replaces the set; '' clears)"
+    )
     edit_parser.add_argument("--loaned-to", help="Who currently has the book")
     edit_parser.add_argument("--local-notes", help="Local catalogue notes")
 
@@ -615,13 +623,13 @@ def _format_cover_result(result: dict[str, object], *, dry_run: bool) -> str:
 
 def _local_updates_from_args(args) -> dict[str, object]:
     updates: dict[str, object] = {}
-    if args.owned is not None:
-        updates["owned"] = 1 if args.owned == "true" else 0
-    if args.copy_count is not None:
-        updates["copy_count"] = args.copy_count
+    if args.format is not None:
+        # argparse choices can't express "empty", so 'none' is the explicit
+        # clear-it value (sets the column to NULL: not owned).
+        updates["format"] = None if args.format == "none" else args.format
+    if args.tags is not None:
+        updates["tags_json"] = db.normalize_tags(args.tags)
     for arg_name, field_name in (
-        ("location", "location"),
-        ("shelf_box", "shelf_box"),
         ("loaned_to", "loaned_to"),
         ("local_notes", "local_notes"),
     ):
@@ -632,13 +640,10 @@ def _local_updates_from_args(args) -> dict[str, object]:
 
 
 def _book_filters_from_args(args) -> BookFilters:
-    owned = None
-    if getattr(args, "owned", None) is not None:
-        owned = args.owned == "true"
     return BookFilters(
         status=getattr(args, "status", None),
-        owned=owned,
-        location=getattr(args, "location", None),
+        format=getattr(args, "format", None),
+        tag=getattr(args, "tag", None),
         author=getattr(args, "author", None),
         limit=getattr(args, "limit", None),
     )
@@ -750,12 +755,11 @@ def _format_book_table(books: list[dict[str, object]]) -> str:
             "Title": str(book.get("title") or ""),
             "Author": str(book.get("author") or ""),
             "Status": str(book.get("reading_status") or ""),
-            "Owned": "yes" if book.get("owned") else "no",
-            "Location": str(book.get("location") or ""),
+            "Format": str(book.get("format") or ""),
         }
         for book in books
     ]
-    headers = ["Goodreads ID", "Title", "Author", "Status", "Owned", "Location"]
+    headers = ["Goodreads ID", "Title", "Author", "Status", "Format"]
     widths = {
         header: min(
             max(len(header), *(len(_truncate(row[header], 48)) for row in rows)),
@@ -812,10 +816,8 @@ def _format_book_detail(book: dict[str, object]) -> str:
         (
             "Local Catalogue Fields",
             [
-                ("Owned", "yes" if book.get("owned") else "no"),
-                ("Copy Count", book.get("copy_count")),
-                ("Location", book.get("location")),
-                ("Shelf/Box", book.get("shelf_box")),
+                ("Format", book.get("format")),
+                ("Tags", ", ".join(book.get("tags") or [])),
                 ("Loaned To", book.get("loaned_to")),
                 ("Local Notes", book.get("local_notes")),
             ],
