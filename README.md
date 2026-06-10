@@ -22,24 +22,27 @@ v1 is CLI-first and SQLite-backed. Because every interface is just an adapter ov
 
 ## Quick Start
 
+The quickest way to try Adso is [pipx](https://pipx.pypa.io/), which installs the `adso` command onto your PATH so it works from any directory and any terminal — no virtual environment to create or activate:
+
 ```bash
-git clone https://github.com/davidwhipps/adso.git
-cd adso
-python3 -m venv .venv
-. .venv/bin/activate
-pip install .
+pipx install "git+https://github.com/davidwhipps/adso.git"
+
 adso init
 adso import goodreads goodreads_library_export.csv
 adso list
 adso report summary
 ```
 
+Don't have pipx? `brew install pipx` (macOS) or see the [pipx install guide](https://pipx.pypa.io/stable/installation/). Prefer `uv`? `uv tool install "git+https://github.com/davidwhipps/adso.git"` does the same thing. To work from a clone instead, see [Installation](#installation).
+
 By default Adso uses `adso.sqlite` in the current directory. Pass `--db path/to/adso.sqlite` before the command to use another database.
 
-No Goodreads export handy? Try the synthetic sample data:
+No Goodreads export handy? Try the synthetic sample data. From a clone it's already in `examples/`; if you installed with pipx, grab it first:
 
 ```bash
-adso import goodreads examples/goodreads_sample.csv
+curl -O https://raw.githubusercontent.com/davidwhipps/adso/main/examples/goodreads_sample.csv
+
+adso import goodreads goodreads_sample.csv
 adso list
 adso show 100001
 ```
@@ -48,13 +51,33 @@ For a fuller walkthrough, see [examples/demo.md](examples/demo.md).
 
 ## Installation
 
-The core CLI has **no required runtime dependencies** — it installs with nothing beyond the standard library and runs on **Python 3.9+**:
+The core CLI has **no required runtime dependencies** — it installs with nothing beyond the standard library and runs on **Python 3.9+**.
+
+**Recommended — pipx** (puts `adso` on your PATH, isolated from the rest of your Python):
 
 ```bash
-pip install .
+pipx install "git+https://github.com/davidwhipps/adso.git"
 ```
 
-Optional features each add their own extra (these need **Python 3.10+**): `.[covers]` for cover art, `.[web]` for the local web UI, `.[notion]` for Notion export — see the sections below. For a pinned, reproducible environment, run `pip install -r requirements-lock.txt` first.
+Optional features each add their own extra (these need **Python 3.10+**): `covers` for cover art, `web` for the local web UI, `notion` for Notion export. Add them in the install:
+
+```bash
+pipx install "adso[web,covers,notion] @ git+https://github.com/davidwhipps/adso.git"
+```
+
+**From a clone** (or if you'd rather manage your own environment), use a virtual environment so Adso's dependencies stay isolated:
+
+```bash
+git clone https://github.com/davidwhipps/adso.git
+cd adso
+python3 -m venv .venv
+. .venv/bin/activate          # the `adso` command lives here while this is active
+pip install .                 # add extras like: pip install ".[web,covers,notion]"
+```
+
+> The `adso` command is only available while that venv is activated — open a new terminal and you'll need to re-run `. .venv/bin/activate` first (or call `.venv/bin/adso` directly). Installing with pipx avoids this by putting `adso` on your PATH for good.
+
+For a pinned, reproducible environment, run `pip install -r requirements-lock.txt` before `pip install .`.
 
 ## How It Works
 
@@ -107,11 +130,15 @@ These work but sit outside the core v1 surface:
 
 ## Development
 
+Work from a clone inside an activated virtual environment (see [Installation](#installation)), then install editable with all extras:
+
 ```bash
-pip install -e ".[web,notion,covers,dev]"   # editable install with all extras
+pip install -e ".[web,notion,covers,dev]"   # editable install — code edits take effect immediately
 python -m unittest discover -s tests         # run the test suite
 ruff check .                                 # lint
 ```
+
+With an editable install the `adso` command reflects your changes as you edit, so there's no reinstall step. It's still only on your PATH while the venv is activated — run `. .venv/bin/activate` in new terminals, or call `.venv/bin/adso` directly.
 
 CI (`.github/workflows/ci.yml`) runs the tests across Python 3.9–3.13, checks a clean-checkout install, and runs ruff on every push and pull request.
 
