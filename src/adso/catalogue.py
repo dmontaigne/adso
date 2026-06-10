@@ -18,6 +18,7 @@ from . import db
 class BookFilters:
     status: str | None = None
     format: str | None = None
+    tag: str | None = None
     author: str | None = None
     limit: int | None = None
 
@@ -82,6 +83,19 @@ def distinct_statuses(conn: sqlite3.Connection) -> list[str]:
         "WHERE reading_status IS NOT NULL AND reading_status != '' "
         "ORDER BY reading_status COLLATE NOCASE"
     ).fetchall()
+    return [row[0] for row in rows]
+
+
+def distinct_tags(conn: sqlite3.Connection) -> list[str]:
+    """Every tag in use, for the catalogue filter dropdown (JSON1 json_each)."""
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT je.value FROM books, json_each(books.tags_json) je "
+            "ORDER BY je.value COLLATE NOCASE"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        # SQLite built without JSON1 (rare); the dropdown just renders empty.
+        return []
     return [row[0] for row in rows]
 
 
@@ -162,6 +176,11 @@ def _filter_sql(filters: BookFilters, table_prefix: str | None = None) -> tuple[
     if filters.format:
         clauses.append(f"{prefix}format = ?")
         params.append(filters.format)
+    if filters.tag:
+        # tags_json holds a JSON array of normalised (lowercase) tags, so an
+        # exact-tag match is a LIKE on the quoted element — no JSON1 needed.
+        clauses.append(f"{prefix}tags_json LIKE ?")
+        params.append(f'%"{filters.tag.lower().strip()}"%')
     if filters.author:
         clauses.append(
             f"({prefix}author LIKE ? COLLATE NOCASE OR {prefix}additional_authors LIKE ? COLLATE NOCASE)"
@@ -215,6 +234,7 @@ def _book_result(row: sqlite3.Row) -> dict[str, Any]:
         "read_count": data["read_count"],
         "owned_copies": data["owned_copies"],
         "format": data["format"],
+        "tags": data["tags"],
         "loaned_to": data["loaned_to"],
         "local_notes": data["local_notes"],
         "cover_path": data.get("cover_path"),

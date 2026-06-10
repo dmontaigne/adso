@@ -336,6 +336,7 @@ def _build_parser() -> argparse.ArgumentParser:
     list_parser.add_argument(
         "--format", choices=["physical", "ebook", "audiobook"], help="Filter by owned format"
     )
+    list_parser.add_argument("--tag", help="Filter by a local tag, e.g. 'philosophy'")
     list_parser.add_argument("--author", help="Filter by author")
     list_parser.add_argument("--limit", type=int, help="Maximum number of books to show")
 
@@ -345,6 +346,7 @@ def _build_parser() -> argparse.ArgumentParser:
     search_parser.add_argument(
         "--format", choices=["physical", "ebook", "audiobook"], help="Filter by owned format"
     )
+    search_parser.add_argument("--tag", help="Filter by a local tag, e.g. 'philosophy'")
     search_parser.add_argument("--author", help="Filter by author")
     search_parser.add_argument("--limit", type=int, help="Maximum number of books to show")
 
@@ -397,6 +399,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "--format",
         choices=["physical", "ebook", "audiobook", "none"],
         help="Owned format ('none' clears it — not owned)",
+    )
+    edit_parser.add_argument(
+        "--tags", help="Comma-separated local tags (replaces the set; '' clears)"
     )
     edit_parser.add_argument("--loaned-to", help="Who currently has the book")
     edit_parser.add_argument("--local-notes", help="Local catalogue notes")
@@ -622,6 +627,8 @@ def _local_updates_from_args(args) -> dict[str, object]:
         # argparse choices can't express "empty", so 'none' is the explicit
         # clear-it value (sets the column to NULL: not owned).
         updates["format"] = None if args.format == "none" else args.format
+    if args.tags is not None:
+        updates["tags_json"] = db.normalize_tags(args.tags)
     for arg_name, field_name in (
         ("loaned_to", "loaned_to"),
         ("local_notes", "local_notes"),
@@ -636,6 +643,7 @@ def _book_filters_from_args(args) -> BookFilters:
     return BookFilters(
         status=getattr(args, "status", None),
         format=getattr(args, "format", None),
+        tag=getattr(args, "tag", None),
         author=getattr(args, "author", None),
         limit=getattr(args, "limit", None),
     )
@@ -809,6 +817,7 @@ def _format_book_detail(book: dict[str, object]) -> str:
             "Local Catalogue Fields",
             [
                 ("Format", book.get("format")),
+                ("Tags", ", ".join(book.get("tags") or [])),
                 ("Loaned To", book.get("loaned_to")),
                 ("Local Notes", book.get("local_notes")),
             ],

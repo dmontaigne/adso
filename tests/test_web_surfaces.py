@@ -138,7 +138,7 @@ class BookLocalEditWebTests(unittest.TestCase):
 
     def test_edit_form_renders_all_fields(self) -> None:
         body = self.client.get("/book/1/local/edit").text
-        for name in ("format", "loaned_to", "local_notes"):
+        for name in ("format", "tags", "loaned_to", "local_notes"):
             self.assertIn(f'name="{name}"', body)
         for value in ("physical", "ebook", "audiobook"):
             self.assertIn(f'value="{value}"', body)
@@ -146,15 +146,17 @@ class BookLocalEditWebTests(unittest.TestCase):
     def test_save_updates_local_fields_and_confirms(self) -> None:
         body = self.client.post(
             "/book/1/local",
-            data={"format": "ebook", "loaned_to": "Sam", "local_notes": "Signed"},
+            data={"format": "ebook", "tags": "Philosophy, medieval",
+                  "loaned_to": "Sam", "local_notes": "Signed"},
         ).text
         self.assertIn("Saved", body)
         self.assertIn("Ebook", body)
+        self.assertIn("philosophy", body)
         conn = db.connect(self.db_path)
         book = db.get_book_by_goodreads_id(conn, "1")
         self.assertEqual(
-            (book["format"], book["loaned_to"], book["local_notes"]),
-            ("ebook", "Sam", "Signed"),
+            (book["format"], book["tags_json"], book["loaned_to"], book["local_notes"]),
+            ("ebook", '["philosophy", "medieval"]', "Sam", "Signed"),
         )
         conn.close()
 

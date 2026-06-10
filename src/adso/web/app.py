@@ -31,6 +31,7 @@ from .. import sync as sync_service
 from ..catalogue import (
     BookFilters,
     distinct_statuses,
+    distinct_tags,
     get_book,
     list_books,
     search_books,
@@ -119,12 +120,14 @@ def create_app(db_path: str | Path, *, config: ResolvedConfig | None = None) -> 
     def _filters(
         status: str | None,
         format: str | None,
+        tag: str | None,
         author: str | None,
         limit: int | None,
     ) -> BookFilters:
         return BookFilters(
             status=status or None,
             format=format if format in db.VALID_FORMATS else None,
+            tag=(tag or "").strip() or None,
             author=author or None,
             limit=limit,
         )
@@ -145,10 +148,11 @@ def create_app(db_path: str | Path, *, config: ResolvedConfig | None = None) -> 
         q: str = Query("", description="Search query"),
         status: str | None = Query(None),
         format: str | None = Query(None),
+        tag: str | None = Query(None),
         author: str | None = Query(None),
         limit: int | None = Query(None, ge=1),
     ) -> HTMLResponse:
-        filters = _filters(status, format, author, limit)
+        filters = _filters(status, format, tag, author, limit)
         books = _query_books(conn, q, filters)
         return templates.TemplateResponse(
             request,
@@ -158,9 +162,11 @@ def create_app(db_path: str | Path, *, config: ResolvedConfig | None = None) -> 
                 "q": q,
                 "status": status or "",
                 "format": format or "",
+                "tag": tag or "",
                 "author": author or "",
                 "statuses": distinct_statuses(conn),
                 "formats": db.VALID_FORMATS,
+                "tags": distinct_tags(conn),
                 "count": len(books),
                 "pending_count": conflicts_service.pending_count(conn),
                 "duplicate_count": dedupe_service.pending_count(conn),
@@ -226,6 +232,7 @@ def create_app(db_path: str | Path, *, config: ResolvedConfig | None = None) -> 
         goodreads_id: str,
         conn: sqlite3.Connection = Depends(get_conn),
         format: str | None = Form(None),
+        tags: str | None = Form(None),
         loaned_to: str | None = Form(None),
         local_notes: str | None = Form(None),
     ) -> HTMLResponse:
@@ -238,6 +245,7 @@ def create_app(db_path: str | Path, *, config: ResolvedConfig | None = None) -> 
 
         updates = {
             "format": _clean(format),
+            "tags_json": db.normalize_tags(tags),
             "loaned_to": _clean(loaned_to),
             "local_notes": (local_notes or "").strip() or None,
         }
@@ -273,10 +281,11 @@ def create_app(db_path: str | Path, *, config: ResolvedConfig | None = None) -> 
         q: str = Query("", description="Search query"),
         status: str | None = Query(None),
         format: str | None = Query(None),
+        tag: str | None = Query(None),
         author: str | None = Query(None),
         limit: int | None = Query(None, ge=1),
     ) -> dict:
-        filters = _filters(status, format, author, limit)
+        filters = _filters(status, format, tag, author, limit)
         books = _query_books(conn, q, filters)
         return {"count": len(books), "books": books}
 

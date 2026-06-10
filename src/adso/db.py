@@ -36,6 +36,7 @@ GOODREADS_FIELDS = (
 
 LOCAL_FIELDS = (
     "format",
+    "tags_json",
     "loaned_to",
     "local_notes",
 )
@@ -45,6 +46,24 @@ LOCAL_FIELDS = (
 # Goodreads `binding` field, which describes the catalogued edition rather than
 # what's actually on the shelf.
 VALID_FORMATS = ("physical", "ebook", "audiobook")
+
+
+def normalize_tags(raw: str | Iterable[str] | None) -> list[str]:
+    """Parse user tag input into the canonical stored form.
+
+    Accepts a comma-separated string or an iterable of tags; lowercases, trims,
+    and dedupes (keeping first occurrence) so "Philosophy" and "philosophy "
+    are one group, mirroring how Goodreads shelves are normalised on import.
+    """
+    if raw is None:
+        return []
+    parts = raw.split(",") if isinstance(raw, str) else raw
+    tags: list[str] = []
+    for part in parts:
+        tag = " ".join(str(part).lower().split())
+        if tag and tag not in tags:
+            tags.append(tag)
+    return tags
 
 # Columns indexed for full-text search. These back both the persistent FTS5
 # index (see _migrate_search_fts) and the LIKE fallback in adso.catalogue, so
@@ -65,6 +84,7 @@ SEARCH_FIELDS = (
     "shelves_json",
     "my_review",
     "private_notes",
+    "tags_json",
     "loaned_to",
     "local_notes",
 )
@@ -127,6 +147,7 @@ def initialize(conn: sqlite3.Connection) -> None:
             read_count INTEGER,
             owned_copies INTEGER,
             format TEXT,
+            tags_json TEXT NOT NULL DEFAULT '[]',
             loaned_to TEXT,
             local_notes TEXT,
             cover_path TEXT,
@@ -213,6 +234,7 @@ def initialize(conn: sqlite3.Connection) -> None:
     _migrate_book_covers(conn)
     _migrate_conflict_decisions(conn)
     _migrate_local_fields_format(conn)
+    _migrate_local_tags(conn)
     _migrate_search_fts(conn)
     conn.commit()
 
@@ -307,6 +329,27 @@ def _migrate_local_fields_format(conn: sqlite3.Connection) -> None:
                 f"Could not migrate the catalogue schema (dropping books.{column}): {exc}",
                 hint="Adso needs SQLite 3.35 or newer to upgrade this catalogue.",
             ) from exc
+
+
+def _migrate_local_tags(conn: sqlite3.Connection) -> None:
+    """Add the local tags_json column to catalogues created before tags.
+
+    tags_json joins SEARCH_FIELDS, so the FTS index and triggers must be
+    rebuilt over the new column set — drop them here and _migrate_search_fts
+    (which runs after this) recreates them.
+    """
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(books)")}
+    if "tags_json" in existing:
+        return
+    conn.executescript(
+        """
+        DROP TRIGGER IF EXISTS books_fts_ai;
+        DROP TRIGGER IF EXISTS books_fts_ad;
+        DROP TRIGGER IF EXISTS books_fts_au;
+        DROP TABLE IF EXISTS books_fts;
+        """
+    )
+    conn.execute("ALTER TABLE books ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]'")
 
 
 def _sqlite_has_fts5(conn: sqlite3.Connection) -> bool:
@@ -437,6 +480,7 @@ def iter_books(conn: sqlite3.Connection) -> Iterable[sqlite3.Row]:
 def row_to_catalogue_dict(row: sqlite3.Row) -> dict[str, Any]:
     data = dict(row)
     data["shelves"] = json.loads(data.pop("shelves_json") or "[]")
+    data["tags"] = json.loads(data.pop("tags_json") or "[]")
     return data
 
 
@@ -529,6 +573,18 @@ def update_local_fields(
             f"Unsupported format {updates['format']!r}; "
             f"expected one of {', '.join(VALID_FORMATS)}, or empty for not owned"
         )
+    if "tags_json" in updates:
+        # Accept a list (normalised here) or an already-serialized JSON array;
+        # either way the stored value is canonical normalize_tags output.
+        value = updates["tags_json"]
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                raise ValueError(f"tags_json must be a JSON array, got {value!r}") from None
+        if not isinstance(value, list):
+            raise ValueError("tags_json must be a list of tags")
+        updates["tags_json"] = json.dumps(normalize_tags(value))
     if not updates:
         return
     book = get_book_by_goodreads_id(conn, goodreads_id)
@@ -792,6 +848,7 @@ def deferred_conflict_count(conn: sqlite3.Connection) -> int:
 # when merging duplicates to decide whether the keeper already has a value.
 _LOCAL_FIELD_EMPTY = {
     "format": None,
+    "tags_json": "[]",
     "loaned_to": None,
     "local_notes": None,
 }

@@ -25,9 +25,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `exports.catalogue_csv_string` / `catalogue_json_string` (in-memory
   serializers reused by the file exports and the web downloads).
 
+### Added
+- **Local tags**: group books your own way (e.g. `philosophy`) with
+  comma-separated tags on the book page or `adso edit --tags`. Tags are
+  local-only (never synced), searchable, filterable in the catalogue and via
+  `adso list/search --tag` / `/api/books?tag=…`, included in exports, and sent
+  to Notion as a `Tags` multi-select.
+
 ### Changed
 - **Local catalogue fields simplified** to `format` (physical / ebook /
-  audiobook — set means owned, empty means not owned), `loaned_to`, and
+  audiobook — set means owned, empty means not owned), `tags`, `loaned_to`, and
   `local_notes`. The `owned`, `copy_count`, `location`, and `shelf_box` columns
   are dropped from the schema (existing catalogues migrate automatically; any
   values in the dropped columns are discarded). The catalogue's owned/location

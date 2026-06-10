@@ -34,7 +34,7 @@ COMMAND_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
             ("list", "Browse books in the catalogue"),
             ("search", "Find a book"),
             ("show", "Show details for one book"),
-            ("edit", "Update format / loaned-to / notes fields"),
+            ("edit", "Update format / tags / loaned-to / notes"),
         ],
     ),
     (

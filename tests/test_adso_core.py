@@ -251,7 +251,12 @@ class AdsoCoreTests(unittest.TestCase):
         db.update_local_fields(
             self.conn,
             "1",
-            {"format": "physical", "loaned_to": "Sam", "local_notes": "Signed"},
+            {
+                "format": "physical",
+                "tags_json": ["philosophy", "medieval"],
+                "loaned_to": "Sam",
+                "local_notes": "Signed",
+            },
         )
 
         changed_path = self.root / "goodreads-changed.csv"
@@ -260,6 +265,7 @@ class AdsoCoreTests(unittest.TestCase):
         book = self.conn.execute("SELECT * FROM books WHERE goodreads_id = '1'").fetchone()
 
         self.assertEqual(book["format"], "physical")
+        self.assertEqual(json.loads(book["tags_json"]), ["philosophy", "medieval"])
         self.assertEqual(book["loaned_to"], "Sam")
         self.assertEqual(book["local_notes"], "Signed")
         self.assertEqual(book["rating"], 5)
@@ -276,6 +282,25 @@ class AdsoCoreTests(unittest.TestCase):
             db.update_local_fields(self.conn, "1", {"format": value})
             book = self.conn.execute("SELECT format FROM books WHERE goodreads_id = '1'").fetchone()
             self.assertEqual(book["format"], value)
+
+    def test_tags_normalize_and_validate(self) -> None:
+        csv_path = self.root / "goodreads.csv"
+        write_goodreads_csv(csv_path, [row()])
+        import_goodreads_csv(self.conn, csv_path, mode="import")
+
+        # Messy comma-separated input is lowercased, trimmed, and deduped.
+        self.assertEqual(
+            db.normalize_tags(" Philosophy, medieval,philosophy , ,Stoicism"),
+            ["philosophy", "medieval", "stoicism"],
+        )
+        db.update_local_fields(self.conn, "1", {"tags_json": ["Philosophy", "Medieval"]})
+        self.assertEqual(get_book(self.conn, "1")["tags"], ["philosophy", "medieval"])
+
+        # Clearing with an empty list works; junk types are rejected.
+        db.update_local_fields(self.conn, "1", {"tags_json": []})
+        self.assertEqual(get_book(self.conn, "1")["tags"], [])
+        with self.assertRaises(ValueError):
+            db.update_local_fields(self.conn, "1", {"tags_json": "not-json"})
 
     def test_conflict_report_when_local_activity_field_changed(self) -> None:
         csv_path = self.root / "goodreads.csv"
@@ -367,6 +392,7 @@ class AdsoCoreTests(unittest.TestCase):
         self.assertIn("original_publication_year", csv_text)
         header = csv_text.splitlines()[0].split(",")
         self.assertIn("format", header)
+        self.assertIn("tags", header)
         for dropped in ("owned", "copy_count", "location", "shelf_box"):
             self.assertNotIn(dropped, header)
 
@@ -599,11 +625,13 @@ class AdsoCoreTests(unittest.TestCase):
             ],
         )
         import_goodreads_csv(self.conn, csv_path, mode="import")
-        db.update_local_fields(self.conn, "2", {"format": "physical"})
+        db.update_local_fields(self.conn, "2", {"format": "physical", "tags_json": ["philosophy"]})
 
         all_books = list_books(self.conn)
         read_books = list_books(self.conn, BookFilters(status="Read"))
         physical_books = list_books(self.conn, BookFilters(format="physical"))
+        tagged_books = list_books(self.conn, BookFilters(tag="Philosophy"))
+        no_tag_books = list_books(self.conn, BookFilters(tag="philo"))
         limited_books = list_books(self.conn, BookFilters(limit=2))
 
         self.assertEqual([book["title"] for book in all_books], [
@@ -613,6 +641,9 @@ class AdsoCoreTests(unittest.TestCase):
         ])
         self.assertEqual([book["goodreads_id"] for book in read_books], ["2"])
         self.assertEqual([book["goodreads_id"] for book in physical_books], ["2"])
+        # Tag filtering is exact-match (case-insensitive), not substring.
+        self.assertEqual([book["goodreads_id"] for book in tagged_books], ["2"])
+        self.assertEqual(no_tag_books, [])
         self.assertEqual(len(limited_books), 2)
         self.assertIsNone(limited_books[0]["format"])
 
@@ -639,7 +670,12 @@ class AdsoCoreTests(unittest.TestCase):
         db.update_local_fields(
             self.conn,
             "2",
-            {"format": "physical", "loaned_to": "Sam", "local_notes": "Lending copy"},
+            {
+                "format": "physical",
+                "tags_json": ["philosophy"],
+                "loaned_to": "Sam",
+                "local_notes": "Lending copy",
+            },
         )
 
         search_results = search_books(self.conn, "winter")
@@ -651,6 +687,7 @@ class AdsoCoreTests(unittest.TestCase):
             "shelves": search_books(self.conn, "science"),
             "local_notes": search_books(self.conn, "lending"),
             "loaned_to": search_books(self.conn, "sam"),
+            "tags": search_books(self.conn, "philosophy"),
             # format is deliberately not indexed: searching a format name
             # shouldn't match every owned book — that's what the filter is for.
             "format": search_books(self.conn, "physical"),
@@ -666,6 +703,7 @@ class AdsoCoreTests(unittest.TestCase):
         self.assertEqual([result["goodreads_id"] for result in field_searches["shelves"]], ["2"])
         self.assertEqual([result["goodreads_id"] for result in field_searches["local_notes"]], ["2"])
         self.assertEqual([result["goodreads_id"] for result in field_searches["loaned_to"]], ["2"])
+        self.assertEqual([result["goodreads_id"] for result in field_searches["tags"]], ["2"])
         self.assertEqual(field_searches["format"], [])
         self.assertEqual(book["title"], "The Left Hand of Darkness")
         self.assertEqual(book["shelves"], ["fiction", "science-fiction"])
@@ -1035,6 +1073,35 @@ class LocalFieldsFormatMigrationTests(unittest.TestCase):
         self.assertEqual(
             self.conn.execute("SELECT format FROM books WHERE goodreads_id = '1'").fetchone()[0],
             "physical",
+        )
+
+    def test_pre_tags_catalogue_gains_tags_and_search_index(self) -> None:
+        # Simulate a catalogue from before tags existed: no tags_json column,
+        # FTS built over the tag-less column set.
+        self.conn.executescript(
+            """
+            DROP TRIGGER IF EXISTS books_fts_ai;
+            DROP TRIGGER IF EXISTS books_fts_ad;
+            DROP TRIGGER IF EXISTS books_fts_au;
+            DROP TABLE IF EXISTS books_fts;
+            ALTER TABLE books DROP COLUMN tags_json;
+            """
+        )
+        self.conn.execute(
+            "INSERT INTO books (goodreads_id, title, loaned_to) VALUES ('1', 'Meditations', 'Sam')"
+        )
+        self.conn.commit()
+
+        db.initialize(self.conn)
+
+        self.assertIn("tags_json", self._book_columns())
+        db.update_local_fields(self.conn, "1", {"tags_json": ["philosophy"]})
+        self.assertEqual(
+            [b["goodreads_id"] for b in search_books(self.conn, "philosophy")], ["1"]
+        )
+        self.assertEqual(
+            [b["goodreads_id"] for b in list_books(self.conn, BookFilters(tag="philosophy"))],
+            ["1"],
         )
 
     def test_initialize_is_idempotent_on_current_schema(self) -> None:

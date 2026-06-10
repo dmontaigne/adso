@@ -21,8 +21,16 @@
     <option value="{{ f }}" {{ "selected" if f == format }}>{{ f | capitalize }}</option>
     {% endfor %}
   </select>
+  {% if tags or tag %}
+  <select name="tag" onchange="this.form.submit()" class="input w-40">
+    <option value="">All tags</option>
+    {% for t in tags %}
+    <option value="{{ t }}" {{ "selected" if t == tag }}>{{ t }}</option>
+    {% endfor %}
+  </select>
+  {% endif %}
   <button type="submit" class="btn">Search</button>
-  {% if q or status or format %}
+  {% if q or status or format or tag %}
   <a href="/" class="btn-outline">Clear</a>
   {% endif %}
 </form>

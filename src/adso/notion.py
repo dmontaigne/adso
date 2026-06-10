@@ -168,4 +168,6 @@ def _build_properties(book: dict[str, Any]) -> dict[str, Any]:
         props["Date Read"] = {"date": {"start": str(book["date_read"])}}
     if book.get("format"):
         props["Format"] = {"select": {"name": str(book["format"]).capitalize()}}
+    if book.get("tags"):
+        props["Tags"] = {"multi_select": [{"name": str(tag)} for tag in book["tags"]]}
     return props
