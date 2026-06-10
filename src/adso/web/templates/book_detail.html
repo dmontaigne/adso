@@ -13,24 +13,54 @@
     <p class="text-muted-foreground">
       {{ book.author or "Unknown author" }}{% if book.additional_authors %}, {{ book.additional_authors }}{% endif %}
     </p>
-    {% if book.description %}
-    <p class="mt-3 max-w-prose whitespace-pre-line text-sm text-muted-foreground">{{ book.description }}</p>
-    {% endif %}
-    {% if book.subjects or book.subject_places or book.subject_times %}
-    <div class="mt-3 flex max-w-prose flex-wrap gap-1">
-      {% for s in book.subjects %}
-      <a href="/?q={{ s | urlencode }}" class="badge-secondary hover:underline">{{ s }}</a>
-      {% endfor %}
-      {% for s in book.subject_places %}
-      <a href="/?q={{ s | urlencode }}" class="badge-outline hover:underline">{{ s }}</a>
-      {% endfor %}
-      {% for s in book.subject_times %}
-      <a href="/?q={{ s | urlencode }}" class="badge-outline hover:underline">{{ s }}</a>
-      {% endfor %}
-    </div>
-    {% endif %}
   </div>
 </div>
+
+{% if book.description or book.subjects or book.subject_places or book.subject_times %}
+<div class="card mb-6">
+  <header class="flex items-center justify-between">
+    <h2>About</h2>
+    {% if book.metadata_source %}
+    <span class="text-xs text-muted-foreground">From Open Library</span>
+    {% endif %}
+  </header>
+  <section>
+    {% if book.description %}
+    <p class="max-w-prose whitespace-pre-line text-sm leading-relaxed">{{ book.description }}</p>
+    {% endif %}
+    {% if book.subjects %}
+    <div class="{{ 'mt-4' if book.description }}">
+      <h3 class="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Subjects</h3>
+      <div class="flex flex-wrap gap-1">
+        {% for s in book.subjects %}
+        <a href="/?q={{ s | urlencode }}" class="badge-secondary hover:underline">{{ s }}</a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+    {% if book.subject_places %}
+    <div class="{{ 'mt-4' if book.description or book.subjects }}">
+      <h3 class="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Places</h3>
+      <div class="flex flex-wrap gap-1">
+        {% for s in book.subject_places %}
+        <a href="/?q={{ s | urlencode }}" class="badge-outline hover:underline">{{ s }}</a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+    {% if book.subject_times %}
+    <div class="{{ 'mt-4' if book.description or book.subjects or book.subject_places }}">
+      <h3 class="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Eras</h3>
+      <div class="flex flex-wrap gap-1">
+        {% for s in book.subject_times %}
+        <a href="/?q={{ s | urlencode }}" class="badge-outline hover:underline">{{ s }}</a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </section>
+</div>
+{% endif %}
 
 <div class="grid gap-6 md:grid-cols-2">
   <div class="card">
