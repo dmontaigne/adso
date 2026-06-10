@@ -87,6 +87,9 @@ SEARCH_FIELDS = (
     "tags_json",
     "loaned_to",
     "local_notes",
+    "subjects_json",
+    "subject_places_json",
+    "subject_times_json",
 )
 
 
@@ -155,6 +158,14 @@ def initialize(conn: sqlite3.Connection) -> None:
             cover_source_url TEXT,
             cover_status TEXT,
             cover_fetched_at TEXT,
+            description TEXT,
+            subjects_json TEXT NOT NULL DEFAULT '[]',
+            subject_places_json TEXT NOT NULL DEFAULT '[]',
+            subject_times_json TEXT NOT NULL DEFAULT '[]',
+            metadata_source TEXT,
+            metadata_source_url TEXT,
+            metadata_status TEXT,
+            metadata_fetched_at TEXT,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             last_goodreads_import_run_id INTEGER,
@@ -235,6 +246,7 @@ def initialize(conn: sqlite3.Connection) -> None:
     _migrate_conflict_decisions(conn)
     _migrate_local_fields_format(conn)
     _migrate_local_tags(conn)
+    _migrate_book_metadata(conn)
     _migrate_search_fts(conn)
     conn.commit()
 
@@ -350,6 +362,39 @@ def _migrate_local_tags(conn: sqlite3.Connection) -> None:
         """
     )
     conn.execute("ALTER TABLE books ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]'")
+
+
+def _migrate_book_metadata(conn: sqlite3.Connection) -> None:
+    """Add Open Library metadata columns to catalogues created before them.
+
+    The subject columns join SEARCH_FIELDS, so the FTS index and triggers must
+    be rebuilt over the new column set — drop them here and _migrate_search_fts
+    (which runs after this) recreates them.
+    """
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(books)")}
+    columns = {
+        "description": "TEXT",
+        "subjects_json": "TEXT NOT NULL DEFAULT '[]'",
+        "subject_places_json": "TEXT NOT NULL DEFAULT '[]'",
+        "subject_times_json": "TEXT NOT NULL DEFAULT '[]'",
+        "metadata_source": "TEXT",
+        "metadata_source_url": "TEXT",
+        "metadata_status": "TEXT",
+        "metadata_fetched_at": "TEXT",
+    }
+    missing = {name: ddl for name, ddl in columns.items() if name not in existing}
+    if not missing:
+        return
+    conn.executescript(
+        """
+        DROP TRIGGER IF EXISTS books_fts_ai;
+        DROP TRIGGER IF EXISTS books_fts_ad;
+        DROP TRIGGER IF EXISTS books_fts_au;
+        DROP TABLE IF EXISTS books_fts;
+        """
+    )
+    for name, ddl in missing.items():
+        conn.execute(f"ALTER TABLE books ADD COLUMN {name} {ddl}")
 
 
 def _sqlite_has_fts5(conn: sqlite3.Connection) -> bool:
@@ -481,6 +526,9 @@ def row_to_catalogue_dict(row: sqlite3.Row) -> dict[str, Any]:
     data = dict(row)
     data["shelves"] = json.loads(data.pop("shelves_json") or "[]")
     data["tags"] = json.loads(data.pop("tags_json") or "[]")
+    data["subjects"] = json.loads(data.pop("subjects_json") or "[]")
+    data["subject_places"] = json.loads(data.pop("subject_places_json") or "[]")
+    data["subject_times"] = json.loads(data.pop("subject_times_json") or "[]")
     return data
 
 
@@ -626,6 +674,104 @@ def set_cover(
         (cover_path, cover_source, cover_source_url, cover_status, book_id),
     )
     conn.commit()
+
+
+def set_metadata(
+    conn: sqlite3.Connection,
+    book_id: int,
+    *,
+    description: str | None,
+    subjects: list[str],
+    subject_places: list[str],
+    subject_times: list[str],
+    metadata_source: str | None,
+    metadata_source_url: str | None,
+    metadata_status: str,
+) -> None:
+    """Record the outcome of an Open Library metadata fetch for one book.
+
+    Like covers, metadata is local enrichment, not a Goodreads-sourced field,
+    so this writes directly to the books row without touching
+    source_snapshots/conflicts.
+    """
+    conn.execute(
+        """
+        UPDATE books
+        SET description = ?,
+            subjects_json = ?,
+            subject_places_json = ?,
+            subject_times_json = ?,
+            metadata_source = ?,
+            metadata_source_url = ?,
+            metadata_status = ?,
+            metadata_fetched_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (
+            description,
+            json.dumps(subjects),
+            json.dumps(subject_places),
+            json.dumps(subject_times),
+            metadata_source,
+            metadata_source_url,
+            metadata_status,
+            book_id,
+        ),
+    )
+    conn.commit()
+
+
+def clear_metadata(conn: sqlite3.Connection, book_id: int) -> None:
+    """Reset all metadata fields for one book (so the next fetch reconsiders it)."""
+    conn.execute(
+        """
+        UPDATE books
+        SET description = NULL,
+            subjects_json = '[]',
+            subject_places_json = '[]',
+            subject_times_json = '[]',
+            metadata_source = NULL,
+            metadata_source_url = NULL,
+            metadata_status = NULL,
+            metadata_fetched_at = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (book_id,),
+    )
+    conn.commit()
+
+
+def backfill_isbns(
+    conn: sqlite3.Connection,
+    book_id: int,
+    *,
+    isbn10: str | None = None,
+    isbn13: str | None = None,
+) -> bool:
+    """Fill empty ISBN columns from enrichment data; never overwrite a value.
+
+    Goodreads stays authoritative for ISBNs (they are informational sync
+    fields); enrichment only fills vacuums, enforced here in the SQL. Returns
+    whether anything changed.
+    """
+    changed = 0
+    if isbn13:
+        changed += conn.execute(
+            "UPDATE books SET isbn13 = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND (isbn13 IS NULL OR isbn13 = '')",
+            (isbn13, book_id),
+        ).rowcount
+    if isbn10:
+        changed += conn.execute(
+            "UPDATE books SET isbn10 = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND (isbn10 IS NULL OR isbn10 = '')",
+            (isbn10, book_id),
+        ).rowcount
+    if changed:
+        conn.commit()
+    return bool(changed)
 
 
 def clear_cover(conn: sqlite3.Connection, book_id: int) -> None:

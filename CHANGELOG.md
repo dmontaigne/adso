@@ -24,6 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **latest-sync status card** on the Activity page linking to them.
 - `exports.catalogue_csv_string` / `catalogue_json_string` (in-memory
   serializers reused by the file exports and the web downloads).
+- **Open Library metadata enrichment**: `adso fetch-metadata` (and an automatic
+  pass after import/sync, opt out with `--no-metadata`) fetches work
+  descriptions, subjects, and place/time facets — shown on the book page as a
+  synopsis plus searchable badges, included in exports (`subjects` joins the
+  CSV; JSON carries everything). Books the Goodreads CSV left without ISBNs get
+  them backfilled from the matched Open Library edition, and a sync guard now
+  ensures an empty incoming Goodreads value never erases stored data.
 - **Local tags**: group books your own way (e.g. `philosophy`) with
   comma-separated tags on the book page or `adso edit --tags`. Tags are
   local-only (never synced), searchable, filterable in the catalogue and via

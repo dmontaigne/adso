@@ -20,6 +20,12 @@
       {% if summary.skipped %}<span class="badge-outline">{{ summary.skipped }} skipped</span>{% endif %}
       {% if summary.conflicts %}<span class="badge-destructive">{{ summary.conflicts }} conflicts</span>{% endif %}
     </div>
+    {% if covers %}
+    <p class="mt-3 text-sm text-muted-foreground">Covers: {{ covers.fetched }} fetched, {{ covers.not_found }} not found{% if covers.errors %}, {{ covers.errors }} errors{% endif %}.</p>
+    {% endif %}
+    {% if metadata %}
+    <p class="mt-1 text-sm text-muted-foreground">Metadata: {{ metadata.fetched }} fetched, {{ metadata.not_found }} not found{% if metadata.errors %}, {{ metadata.errors }} errors{% endif %}{% if metadata.isbn_backfilled %} · {{ metadata.isbn_backfilled }} ISBN{{ "" if metadata.isbn_backfilled == 1 else "s" }} backfilled{% endif %}.</p>
+    {% endif %}
     <div class="mt-4 flex flex-wrap gap-3 text-sm">
       <a href="/" class="hover:underline">View catalogue →</a>
       <a href="/activity" class="hover:underline">View activity →</a>

@@ -25,6 +25,7 @@ EXPORT_FIELDS = [
     "date_read",
     "date_added",
     "shelves",
+    "subjects",
     "format",
     "tags",
     "loaned_to",
@@ -47,6 +48,9 @@ def catalogue_csv_string(conn) -> str:
         data = db.row_to_catalogue_dict(row)
         data["shelves"] = ", ".join(data["shelves"])
         data["tags"] = ", ".join(data["tags"])
+        # description deliberately stays out of the CSV (multi-paragraph text
+        # wrecks spreadsheets); the JSON export carries full fidelity.
+        data["subjects"] = ", ".join(data["subjects"])
         writer.writerow({field: data.get(field) for field in EXPORT_FIELDS})
     return buffer.getvalue()
 

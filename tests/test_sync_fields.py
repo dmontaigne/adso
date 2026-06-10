@@ -65,13 +65,60 @@ class InformationalFieldTests(unittest.TestCase):
         # ...but the value is still refreshed for display.
         self.assertEqual(self._avg(), "4.50")
 
-    def test_average_rating_blanked_is_not_an_update(self) -> None:
+    def test_blank_informational_value_never_erases_real_data(self) -> None:
+        # An empty incoming value must not blank stored data — this protects
+        # enrichment backfills (e.g. OL ISBNs) and ordinary informational
+        # fields alike from being silently erased.
         changed = self.root / "blank.csv"
         _write(changed, _base_row(**{"Average Rating": ""}))
         summary = import_goodreads_csv(self.conn, changed, mode="sync")
         self.assertEqual(summary.updated, 0)
         self.assertEqual(summary.unchanged, 1)
-        self.assertEqual(self._avg(), "")
+        self.assertEqual(self._avg(), "4.23")  # retained, not blanked
+
+    def test_isbn_backfill_survives_resync_with_empty_isbn(self) -> None:
+        # Simulate a Goodreads row with no ISBNs, then an OL backfill, then a
+        # re-sync of the same empty row: the backfilled ISBN must be retained
+        # and no conflict raised.
+        first = self.root / "noisbn.csv"
+        _write(first, _base_row(**{"Book Id": "2", "Title": "No ISBN", "ISBN": "", "ISBN13": ""}))
+        import_goodreads_csv(self.conn, first, mode="sync")
+        book_id = int(
+            self.conn.execute("SELECT id FROM books WHERE goodreads_id='2'").fetchone()[0]
+        )
+        self.assertTrue(db.backfill_isbns(self.conn, book_id, isbn13="9780000000001"))
+
+        again = self.root / "noisbn-again.csv"
+        _write(again, _base_row(**{"Book Id": "2", "Title": "No ISBN", "ISBN": "", "ISBN13": ""}))
+        summary = import_goodreads_csv(self.conn, again, mode="sync")
+
+        isbn13 = self.conn.execute(
+            "SELECT isbn13 FROM books WHERE goodreads_id='2'"
+        ).fetchone()[0]
+        self.assertEqual(isbn13, "9780000000001")
+        self.assertEqual(summary.conflicts, 0)
+
+    def test_nonempty_goodreads_isbn_still_wins_over_backfill(self) -> None:
+        # Informational fields stay Goodreads-authoritative: a real incoming
+        # ISBN replaces a backfilled one silently.
+        first = self.root / "noisbn2.csv"
+        _write(first, _base_row(**{"Book Id": "3", "Title": "Late ISBN", "ISBN": "", "ISBN13": ""}))
+        import_goodreads_csv(self.conn, first, mode="sync")
+        book_id = int(
+            self.conn.execute("SELECT id FROM books WHERE goodreads_id='3'").fetchone()[0]
+        )
+        db.backfill_isbns(self.conn, book_id, isbn13="9780000000001")
+
+        update = self.root / "lateisbn.csv"
+        _write(update, _base_row(**{"Book Id": "3", "Title": "Late ISBN", "ISBN13": "9785555555555"}))
+        summary = import_goodreads_csv(self.conn, update, mode="sync")
+
+        isbn13 = self.conn.execute(
+            "SELECT isbn13 FROM books WHERE goodreads_id='3'"
+        ).fetchone()[0]
+        self.assertEqual(isbn13, "9785555555555")
+        self.assertEqual(summary.conflicts, 0)
+        self.assertEqual(summary.updated, 0)  # informational: silent refresh
 
     def test_publisher_relabel_is_not_an_update(self) -> None:
         changed = self.root / "pub.csv"

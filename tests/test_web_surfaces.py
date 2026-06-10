@@ -178,5 +178,50 @@ class BookLocalEditWebTests(unittest.TestCase):
         self.assertEqual(self.client.get("/book/nope/local/edit").status_code, 404)
 
 
+@unittest.skipUnless(_HAS_TESTCLIENT, "fastapi TestClient (httpx) not installed")
+class BookMetadataWebTests(unittest.TestCase):
+    def setUp(self) -> None:
+        from adso.web.app import create_app
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = str(Path(self.tmp.name) / "adso.sqlite")
+        conn = db.connect(self.db_path)
+        db.initialize(conn)
+        _seed(conn)
+        book_id = int(conn.execute("SELECT id FROM books WHERE goodreads_id='1'").fetchone()[0])
+        db.set_metadata(
+            conn,
+            book_id,
+            description="A clockmaker catalogues impossible plants.",
+            subjects=["Botanical fiction"],
+            subject_places=["Prague"],
+            subject_times=["19th century"],
+            metadata_source="openlibrary:isbn",
+            metadata_source_url="https://openlibrary.org/isbn/x.json",
+            metadata_status="fetched",
+        )
+        conn.close()
+        self.client = TestClient(create_app(self.db_path))
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_detail_page_renders_description_and_subject_badges(self) -> None:
+        body = self.client.get("/book/1").text
+        self.assertIn("A clockmaker catalogues impossible plants.", body)
+        self.assertIn("Botanical fiction", body)
+        self.assertIn("Prague", body)
+        self.assertIn("19th century", body)
+        # Subject badges link into catalogue search.
+        self.assertIn('href="/?q=Botanical%20fiction"', body)
+
+    def test_api_book_includes_metadata_fields(self) -> None:
+        payload = self.client.get("/api/books/1").json()
+        self.assertEqual(payload["description"], "A clockmaker catalogues impossible plants.")
+        self.assertEqual(payload["subjects"], ["Botanical fiction"])
+        self.assertEqual(payload["subject_places"], ["Prague"])
+        self.assertEqual(payload["subject_times"], ["19th century"])
+
+
 if __name__ == "__main__":
     unittest.main()

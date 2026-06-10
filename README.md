@@ -85,7 +85,8 @@ For a pinned, reproducible environment, run `pip install -r requirements-lock.tx
 - **Goodreads CSV exports** are preserved raw and normalized into the catalogue.
 - **Your local fields** (format, tags, loaned-to, notes) are protected during sync.
 - **Goodreads updates apply safely** only when your local value hasn't changed since the last sync — otherwise the change is held as a conflict rather than silently overwriting your data.
-- **Cosmetic drift is ignored** — community ratings, edition relabels, ISBNs, page counts, and title casing refresh quietly, while real title/author changes stay tracked.
+- **Cosmetic drift is ignored** — community ratings, edition relabels, ISBNs, page counts, and title casing refresh quietly, while real title/author changes stay tracked. An empty Goodreads value never erases stored data.
+- **Open Library enrichment** — covers, plus descriptions, subjects, and place/time facets fetched politely (no API key); books the CSV left without ISBNs get them backfilled from the matched edition.
 
 ## Commands
 
@@ -98,6 +99,7 @@ adso list --status Read --format physical  # browse, with filters
 adso search "winter society" --limit 10
 adso show GOODREADS_ID
 adso edit GOODREADS_ID --format physical --tags "philosophy, medieval"
+adso fetch-metadata --limit 200            # descriptions & subjects from Open Library, in batches
 adso conflicts                             # list open conflicts (--all shows decided ones too)
 adso resolve CONFLICT_ID --accept-incoming # or --keep-local / --set / --ignore / --review-later / --reopen
 adso report summary --output reports/summary.md

@@ -274,7 +274,8 @@ class CoversTests(unittest.TestCase):
                 return FakeResp(status_code=429)
 
         fake = FakeRequests()
-        with patch("adso.covers._require_requests", return_value=fake):
+        # The request loop (and its 429 cap) lives in the shared ol_http client.
+        with patch("adso.ol_http.require_requests", return_value=fake):
             result = fetch_covers(self.conn, self.root)
 
         self.assertEqual(result["not_found"], 1)
