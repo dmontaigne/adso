@@ -26,6 +26,7 @@ from .. import covers as covers_service
 from .. import db
 from .. import dedupe as dedupe_service
 from .. import exports as exports_service
+from .. import metadata as metadata_service
 from .. import reports as reports_service
 from .. import sync as sync_service
 from ..catalogue import (
@@ -444,6 +445,17 @@ def create_app(db_path: str | Path, *, config: ResolvedConfig | None = None) -> 
                     }
                 except covers_service.CoversError:
                     context["covers"] = None
+                # Same best-effort posture for Open Library metadata.
+                try:
+                    metadata_result = metadata_service.fetch_metadata(conn)
+                    context["metadata"] = {
+                        "fetched": metadata_result["fetched"],
+                        "not_found": metadata_result["not_found"],
+                        "errors": metadata_result["errors"],
+                        "isbn_backfilled": metadata_result["isbn_backfilled"],
+                    }
+                except metadata_service.MetadataError:
+                    context["metadata"] = None
             except Exception as exc:  # noqa: BLE001 - surface any parse/IO error to the user
                 context["error"] = f"Could not import that file: {exc}"
             finally:

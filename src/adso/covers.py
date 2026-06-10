@@ -29,13 +29,15 @@ from typing import Any
 
 from . import db
 
-# A descriptive User-Agent is requested by Open Library so they can identify
-# polite clients; see https://openlibrary.org/dev/docs/api/covers.
-USER_AGENT = "Adso/0.1 (local-first book catalogue; +https://github.com/davidwhipps/adso)"
-RATE_LIMIT_DELAY = 0.75
-
-# (connect, read) timeouts: a stalled connection can never hang the whole run.
-HTTP_TIMEOUT = (10, 30)
+# The polite HTTP client lives in ol_http (shared with the metadata fetcher);
+# the names are re-exported here because tests and callers patch/read them as
+# adso.covers attributes.
+from .ol_http import (  # noqa: F401
+    HTTP_TIMEOUT,
+    RATE_LIMIT_DELAY,
+    USER_AGENT,
+)
+from .ol_http import request as _http_request
 
 # iTunes' unauthenticated Search API allows ~20 requests/minute, so space the
 # iTunes calls (only hit as a fallback) to stay comfortably under that.
@@ -59,37 +61,12 @@ class CoversError(RuntimeError):
     pass
 
 
-def _require_requests():
-    try:
-        import requests
-    except ModuleNotFoundError as exc:  # pragma: no cover - exercised via extras
-        raise CoversError(
-            "Install the requests dependency before fetching covers:\n"
-            "    pip install -e '.[covers]'"
-        ) from exc
-    return requests
-
-
 def _request(method: str, url: str, **kwargs):
-    """HTTP wrapper with bounded timeouts and bounded 429 backoff.
+    """Shared polite HTTP client (see ol_http), raising CoversError on failure.
 
-    Both the connect/read timeout and the 429 retry count are capped so that a
-    slow or throttling host can never stall the sequential fetch (a scalar
-    timeout plus an unbounded 429 loop is what let an overnight run hang).
+    Kept as a module attribute so tests can patch ``adso.covers._request``.
     """
-    requests = _require_requests()
-    headers = {"User-Agent": USER_AGENT, **kwargs.pop("headers", {})}
-    kwargs.setdefault("timeout", HTTP_TIMEOUT)
-    response = None
-    for _ in range(3):
-        try:
-            response = requests.request(method, url, headers=headers, **kwargs)
-        except Exception as exc:  # noqa: BLE001 - network errors become a miss/error upstream
-            raise CoversError(f"Could not reach {url}: {str(exc)[:300]}") from exc
-        if response.status_code != 429:
-            return response
-        time.sleep(min(int(response.headers.get("Retry-After", 2) or 2), 5))
-    return response  # still 429 after retries -> treated as a miss upstream
+    return _http_request(method, url, error_cls=CoversError, **kwargs)
 
 
 def _detect_image_ext(data: bytes) -> str | None:

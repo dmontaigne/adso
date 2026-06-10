@@ -18,6 +18,7 @@ from .covers import CoversError, fetch_covers, set_manual_cover
 from .doctor import doctor_report
 from .errors import AdsoError
 from .exports import export_csv, export_json
+from .metadata import MetadataError, fetch_metadata
 from .notion import NotionConfigError, export_to_notion
 from .reports import (
     latest_conflicts_markdown,
@@ -42,7 +43,7 @@ def main(argv: list[str] | None = None) -> int:
             exc,
             hint="Set NOTION_API_KEY / NOTION_DB_ID, or pick a profile with `adso config use`.",
         )
-    except CoversError as exc:
+    except (CoversError, MetadataError) as exc:
         return _fail(exc)
     except sqlite3.DatabaseError as exc:
         return _fail(f"catalogue database problem: {exc}", hint="Try `adso doctor`.")
@@ -137,6 +138,8 @@ def _dispatch(args, parser) -> int:
                 print(f"Conflict report: {output}")
             if not args.no_covers:
                 _auto_fetch_covers(conn, cfg.db_path)
+            if not args.no_metadata:
+                _auto_fetch_metadata(conn)
             return 0
 
         if args.command == "fetch-covers":
@@ -149,6 +152,17 @@ def _dispatch(args, parser) -> int:
                 dry_run=args.dry_run,
             )
             print(_format_cover_result(result, dry_run=args.dry_run))
+            return 0
+
+        if args.command == "fetch-metadata":
+            result = fetch_metadata(
+                conn,
+                limit=args.limit,
+                refresh=args.refresh,
+                retry_missing=args.retry_missing,
+                dry_run=args.dry_run,
+            )
+            print(_format_metadata_result(result, dry_run=args.dry_run))
             return 0
 
         if args.command == "set-cover":
@@ -362,6 +376,11 @@ def _build_parser() -> argparse.ArgumentParser:
     goodreads_import.add_argument(
         "--no-covers", action="store_true", help="Skip the automatic cover-art fetch after import"
     )
+    goodreads_import.add_argument(
+        "--no-metadata",
+        action="store_true",
+        help="Skip the automatic Open Library metadata fetch after import",
+    )
 
     sync_parser = subparsers.add_parser(
         "sync", help="Refresh the catalogue from source data (same safe operation as `import`)"
@@ -371,6 +390,11 @@ def _build_parser() -> argparse.ArgumentParser:
     goodreads_sync.add_argument("csv", help="Path to Goodreads CSV export")
     goodreads_sync.add_argument(
         "--no-covers", action="store_true", help="Skip the automatic cover-art fetch after sync"
+    )
+    goodreads_sync.add_argument(
+        "--no-metadata",
+        action="store_true",
+        help="Skip the automatic Open Library metadata fetch after sync",
     )
 
     covers_parser = subparsers.add_parser("fetch-covers", help="Download missing cover art")
@@ -385,6 +409,30 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     covers_parser.add_argument(
         "--dry-run", action="store_true", help="Report what would be fetched without writing files"
+    )
+
+    metadata_parser = subparsers.add_parser(
+        "fetch-metadata",
+        help="Download descriptions and subjects from Open Library",
+        description=(
+            "Fetch work descriptions, subjects, and place/time facets from Open "
+            "Library; books with no ISBN also get empty ISBN columns backfilled "
+            "from the matched edition. A full first run over a large catalogue "
+            "takes ~2 requests per book at a polite delay (about 35 minutes per "
+            "1000 books) — use --limit to enrich in batches."
+        ),
+    )
+    metadata_parser.add_argument("--limit", type=int, help="Maximum number of books to fetch metadata for")
+    metadata_parser.add_argument(
+        "--refresh", action="store_true", help="Re-fetch even books already enriched"
+    )
+    metadata_parser.add_argument(
+        "--retry-missing",
+        action="store_true",
+        help="Re-attempt books previously marked not found (keeps already-fetched metadata)",
+    )
+    metadata_parser.add_argument(
+        "--dry-run", action="store_true", help="Report what would be fetched without writing"
     )
 
     set_cover_parser = subparsers.add_parser("set-cover", help="Set a cover from a URL or local file")
@@ -593,6 +641,52 @@ def _auto_fetch_covers(conn, db_path: str) -> None:
             f"\nCovers: {result['fetched']} fetched, "
             f"{result['not_found']} not found, {result['errors']} errors."
         )
+
+
+def _auto_fetch_metadata(conn) -> None:
+    """Best-effort metadata fetch after an import; network errors must not fail import."""
+    try:
+        result = fetch_metadata(conn)
+    except MetadataError as exc:
+        print(f"\nSkipped metadata fetch: {exc}")
+        return
+    if result["fetched"] or result["not_found"] or result["errors"]:
+        line = (
+            f"\nMetadata: {result['fetched']} fetched, "
+            f"{result['not_found']} not found, {result['errors']} errors."
+        )
+        if result["isbn_backfilled"]:
+            line += f" ISBNs backfilled: {result['isbn_backfilled']}."
+        print(line)
+
+
+def _format_metadata_result(result: dict[str, object], *, dry_run: bool) -> str:
+    heading = "Metadata dry-run complete" if dry_run else "Metadata fetch complete"
+    lines = [
+        f"{heading}: "
+        f"{result['fetched']} fetched, {result['not_found']} not found, "
+        f"{result['errors']} errors, {result['skipped']} skipped, "
+        f"{result['isbn_backfilled']} ISBNs backfilled"
+    ]
+    if dry_run:
+        actions = result.get("actions", [])
+        if actions:
+            lines.append("")
+            for action in actions:  # type: ignore[union-attr]
+                if not isinstance(action, dict):
+                    continue
+                title = action.get("title") or "Untitled"
+                outcome = action.get("result")
+                if outcome == "fetched":
+                    detail = f"would fetch from {action.get('source')}"
+                    if action.get("isbn_backfilled"):
+                        detail += ", would backfill ISBN"
+                elif outcome == "not_found":
+                    detail = "no metadata found"
+                else:
+                    detail = "error"
+                lines.append(f"- {title} (Goodreads ID {action.get('goodreads_id')}): {detail}")
+    return "\n".join(lines)
 
 
 def _format_cover_result(result: dict[str, object], *, dry_run: bool) -> str:

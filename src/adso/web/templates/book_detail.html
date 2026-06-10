@@ -8,13 +8,59 @@
     src="/covers/{{ book.goodreads_id }}"
     alt="Cover of {{ book.title }}"
     class="h-48 w-32 shrink-0 rounded-lg border bg-muted object-cover">
-  <div>
+  <div class="min-w-0">
     <h1 class="text-2xl font-semibold tracking-tight">{{ book.title }}</h1>
     <p class="text-muted-foreground">
       {{ book.author or "Unknown author" }}{% if book.additional_authors %}, {{ book.additional_authors }}{% endif %}
     </p>
   </div>
 </div>
+
+{% if book.description or book.subjects or book.subject_places or book.subject_times %}
+<div class="card mb-6">
+  <header class="flex items-center justify-between">
+    <h2>About</h2>
+    {% if book.metadata_source %}
+    <span class="text-xs text-muted-foreground">From Open Library</span>
+    {% endif %}
+  </header>
+  <section>
+    {% if book.description %}
+    <p class="max-w-prose whitespace-pre-line text-sm leading-relaxed">{{ book.description }}</p>
+    {% endif %}
+    {% if book.subjects %}
+    <div class="{{ 'mt-4' if book.description }}">
+      <h3 class="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Subjects</h3>
+      <div class="flex flex-wrap gap-1">
+        {% for s in book.subjects %}
+        <a href="/?q={{ s | urlencode }}" class="badge-secondary hover:underline">{{ s }}</a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+    {% if book.subject_places %}
+    <div class="{{ 'mt-4' if book.description or book.subjects }}">
+      <h3 class="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Places</h3>
+      <div class="flex flex-wrap gap-1">
+        {% for s in book.subject_places %}
+        <a href="/?q={{ s | urlencode }}" class="badge-outline hover:underline">{{ s }}</a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+    {% if book.subject_times %}
+    <div class="{{ 'mt-4' if book.description or book.subjects or book.subject_places }}">
+      <h3 class="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Eras</h3>
+      <div class="flex flex-wrap gap-1">
+        {% for s in book.subject_times %}
+        <a href="/?q={{ s | urlencode }}" class="badge-outline hover:underline">{{ s }}</a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </section>
+</div>
+{% endif %}
 
 <div class="grid gap-6 md:grid-cols-2">
   <div class="card">

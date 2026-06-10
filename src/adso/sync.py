@@ -165,7 +165,15 @@ def _sync_existing_book(conn, existing, record: GoodreadsRecord, *, import_run_i
             # conflict, so routine drift in volatile Goodreads-side data does not
             # churn the sync.
             incoming_value = normalized.get(field)
-            if db.serialize_value(incoming_value) != db.serialize_value(existing[field]):
+            incoming_serialized = db.serialize_value(incoming_value)
+            if incoming_serialized in (None, "") and existing[field] not in (None, ""):
+                # Never erase real data with an empty informational value. This
+                # protects enrichment backfills (e.g. ISBNs filled from Open
+                # Library when the Goodreads CSV had none) and any other stored
+                # value from being silently blanked. A non-empty Goodreads value
+                # still wins — these fields stay Goodreads-authoritative.
+                continue
+            if incoming_serialized != db.serialize_value(existing[field]):
                 silent_updates[field] = incoming_value
             continue
 

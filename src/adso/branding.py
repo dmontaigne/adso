@@ -44,6 +44,7 @@ COMMAND_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
             ("conflicts", "Review open sync conflicts"),
             ("resolve", "Decide a sync conflict"),
             ("fetch-covers", "Download missing cover art"),
+            ("fetch-metadata", "Download descriptions & subjects"),
             ("set-cover", "Set a cover from URL or file"),
             ("dedupe", "Find duplicate books"),
         ],
